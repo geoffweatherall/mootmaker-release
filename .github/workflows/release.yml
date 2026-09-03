@@ -133,9 +133,22 @@ jobs:
       version: ${{ needs.compute-version.outputs.version }}
       ref: ${{ needs.compute-version.outputs.api-sha }}
 
+  # Sequenced after build-api, NOT parallel with it. Decision 7 gives each component its own fresh
+  # ephemeral environment, but mootmaker-webapp and mootmaker-demo-data each deploy mootmaker-api
+  # too - it is a dependency of the environment they test against. So running all three at once
+  # performs THREE simultaneous mootmaker-api deployments, each publishing SnapStart versions,
+  # each of which executes an init to take its snapshot.
+  #
+  # This account's Lambda concurrency quota is 10 and reservations are not possible, and that is
+  # how the v0.0.2 release failed: all three builds died within seconds of each other on a
+  # published version stuck in 'Failed'/'FunctionError', using code and Terraform byte-identical
+  # to what had passed standalone three times. See mootmaker#41.
+  #
+  # The cost is roughly three times the Stage 1 wall clock. A release is a deliberate act that
+  # already takes tens of minutes, so reliability wins over speed here.
   build-webapp:
     name: build-webapp
-    needs: compute-version
+    needs: [compute-version, build-api]
     permissions:
       id-token: write
       contents: read
@@ -144,9 +157,10 @@ jobs:
       version: ${{ needs.compute-version.outputs.version }}
       ref: ${{ needs.compute-version.outputs.webapp-sha }}
 
+  # Sequenced after build-webapp for the same reason - see the comment above build-webapp.
   build-demo-data:
     name: build-demo-data
-    needs: compute-version
+    needs: [compute-version, build-webapp]
     permissions:
       id-token: write
       contents: read
@@ -645,6 +659,11 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      # Decision 5's third case opens an ISSUE when no tag was ever pushed, and that needs
+      # issues:write - contents:write is not enough. The first release exercised only the
+      # tagged-then-failed case, so this gap stayed hidden until a run failed before tagging and
+      # record-outcome itself died with "Resource not accessible by integration (createIssue)".
+      issues: write
     steps:
       - name: Publish the release record
         env:
