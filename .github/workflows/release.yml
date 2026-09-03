@@ -372,6 +372,16 @@ jobs:
           role-to-assume: arn:aws:iam::431071856068:role/mootmaker-release-github-actions-deploy
           aws-region: us-east-1
 
+      # The smoke suites import waitForVerificationCode and freshTestAccount from
+      # mootmaker-webapp/support/ rather than carrying a copy (mootmaker-release#5). Node resolves
+      # an imported file's dependencies relative to ITS OWN location, so support/email.ts looks in
+      # mootmaker-webapp/node_modules - declaring @aws-sdk/client-sqs in this repo's package.json
+      # does not satisfy it. --omit=dev installs only that repo's three runtime dependencies
+      # (client-sqs, client-cognito-identity-provider, mailparser), not its whole build toolchain.
+      - name: Install the webapp's runtime dependencies for the shared email support
+        working-directory: mootmaker-webapp
+        run: npm ci --omit=dev
+
       - name: Install smoke-test dependencies
         working-directory: mootmaker-release
         run: npm ci
@@ -518,6 +528,16 @@ jobs:
         with:
           role-to-assume: arn:aws:iam::431071856068:role/mootmaker-release-github-actions-deploy
           aws-region: us-east-1
+
+      # The smoke suites import waitForVerificationCode and freshTestAccount from
+      # mootmaker-webapp/support/ rather than carrying a copy (mootmaker-release#5). Node resolves
+      # an imported file's dependencies relative to ITS OWN location, so support/email.ts looks in
+      # mootmaker-webapp/node_modules - declaring @aws-sdk/client-sqs in this repo's package.json
+      # does not satisfy it. --omit=dev installs only that repo's three runtime dependencies
+      # (client-sqs, client-cognito-identity-provider, mailparser), not its whole build toolchain.
+      - name: Install the webapp's runtime dependencies for the shared email support
+        working-directory: mootmaker-webapp
+        run: npm ci --omit=dev
 
       - name: Install smoke-test dependencies
         working-directory: mootmaker-release
@@ -671,6 +691,16 @@ jobs:
         with:
           role-to-assume: arn:aws:iam::431071856068:role/mootmaker-release-github-actions-deploy
           aws-region: us-east-1
+
+      # The smoke suites import waitForVerificationCode and freshTestAccount from
+      # mootmaker-webapp/support/ rather than carrying a copy (mootmaker-release#5). Node resolves
+      # an imported file's dependencies relative to ITS OWN location, so support/email.ts looks in
+      # mootmaker-webapp/node_modules - declaring @aws-sdk/client-sqs in this repo's package.json
+      # does not satisfy it. --omit=dev installs only that repo's three runtime dependencies
+      # (client-sqs, client-cognito-identity-provider, mailparser), not its whole build toolchain.
+      - name: Install the webapp's runtime dependencies for the shared email support
+        working-directory: mootmaker-webapp
+        run: npm ci --omit=dev
 
       - name: Install smoke-test dependencies
         working-directory: mootmaker-release
