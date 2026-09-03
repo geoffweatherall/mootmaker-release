@@ -180,9 +180,172 @@ jobs:
 
           echo "pushed=true" >> "$GITHUB_OUTPUT"
 
+  # Promotes the EXACT artifacts Stage 1 produced - downloaded, not rebuilt (Decision 8). Each
+  # component's own deploy.sh does the work, with --skip-build so the jar/bundle already on disk is
+  # what ships. Reusing those scripts rather than inlining terraform here keeps one source of truth
+  # for environment validation, backend keys and TF_DATA_DIR isolation.
+  #
+  # This job is also what STANDS TEST UP the first time. `terraform apply` is create-or-update, so
+  # there is no separate bootstrap step - and deliberately so: Decision 6's mitigation is that
+  # test's state changes only through this pipeline, never by ad hoc interactive use. Creating it
+  # by hand with deploy.sh would break that property on day one.
+  deploy-test:
+    name: deploy-test
+    needs: [compute-version, tag]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: geoffweatherall/mootmaker-api
+          ref: ${{ needs.compute-version.outputs.api-sha }}
+          path: mootmaker-api
+
+      - uses: actions/checkout@v4
+        with:
+          repository: geoffweatherall/mootmaker-webapp
+          ref: ${{ needs.compute-version.outputs.webapp-sha }}
+          path: mootmaker-webapp
+
+      - uses: actions/checkout@v4
+        with:
+          repository: geoffweatherall/mootmaker-demo-data
+          ref: ${{ needs.compute-version.outputs.demo-data-sha }}
+          path: mootmaker-demo-data
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      # The webapp's deploy.sh runs its schema-compatibility check with jq and curl, and writes
+      # env-config.js - no build, but it still needs node available for nothing more than npm's
+      # presence checks in the scripts it calls.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::431071856068:role/mootmaker-release-github-actions-deploy
+          aws-region: us-east-1
+
+      # Downloaded to exactly where each component's Terraform already looks, so deploy.sh
+      # --skip-build finds them without any path plumbing.
+      - uses: actions/download-artifact@v4
+        with:
+          name: mootmaker-api-${{ needs.compute-version.outputs.version }}
+          path: mootmaker-api/impl/target
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: mootmaker-demo-data-${{ needs.compute-version.outputs.version }}
+          path: mootmaker-demo-data/impl/target
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: mootmaker-webapp-${{ needs.compute-version.outputs.version }}
+          path: mootmaker-webapp/webapp/dist
+
+      # Order matters and is not arbitrary. mootmaker-api's Terraform creates the SSM parameters
+      # demo-data reads at runtime and the Cognito/AppSync outputs the webapp's deploy reads, so it
+      # goes first. demo-data last, because seeding it needs the API live.
+      - name: Deploy mootmaker-api to test
+        working-directory: mootmaker-api
+        run: ./deploy.sh test --skip-build
+
+      - name: Deploy mootmaker-webapp to test
+        working-directory: mootmaker-webapp
+        run: ./deploy.sh test --skip-build
+
+      - name: Deploy mootmaker-demo-data to test
+        working-directory: mootmaker-demo-data
+        run: ./deploy.sh test --skip-build
+
+      # NB-2. Deploying demo-data populates nothing - the Lambda only runs when invoked - so the
+      # release seeds explicitly rather than waiting for the daily schedule. Without this, the
+      # smoke test's "existing demo data reads back" checks would fail against a freshly created
+      # test environment.
+      #
+      # --cli-read-timeout clears the function's own 900s ceiling. The CLI's 60s default would
+      # report a false failure on a full seed while the Lambda ran on regardless - the same trap
+      # that made demo-data's acceptance suite read a silent retry (demo-data#16).
+      - name: Seed test with demo data
+        run: |
+          aws lambda invoke \
+            --function-name test-mootmaker-demo-data \
+            --cli-read-timeout 900 \
+            --payload '{}' \
+            /dev/stdout
+
+  # A failure here STOPS the release. test is deliberately NOT rolled back, reset or torn down -
+  # that would destroy the evidence the environment exists to preserve (Decision 6a). The
+  # consequence is accepted knowingly: the next attempt's deploy-to-test may fail again, loudly,
+  # until whatever is wrong is fixed by hand.
+  smoke-test-test:
+    name: smoke-test-test
+    needs: [compute-version, deploy-test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: mootmaker-release
+
+      - uses: actions/checkout@v4
+        with:
+          repository: geoffweatherall/mootmaker-api
+          ref: ${{ needs.compute-version.outputs.api-sha }}
+          path: mootmaker-api
+
+      - uses: actions/checkout@v4
+        with:
+          repository: geoffweatherall/mootmaker-webapp
+          ref: ${{ needs.compute-version.outputs.webapp-sha }}
+          path: mootmaker-webapp
+
+      - uses: actions/checkout@v4
+        with:
+          repository: geoffweatherall/mootmaker-email-testing
+          path: mootmaker-email-testing
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: mootmaker-release/package-lock.json
+
+      - name: Install smoke-test dependencies
+        working-directory: mootmaker-release
+        run: npm ci
+
+      # Both smoke projects pin channel: 'chrome', so this installs real Google Chrome rather than
+      # the bundled chromium build.
+      - name: Install Playwright browser
+        working-directory: mootmaker-release
+        run: npx playwright install --with-deps chrome
+
+      # The mutating suite: real signup through SES/SNS/SQS, sign in, create a meeting, read demo
+      # data, reset the password, delete the account. run.sh refuses this stage against production.
+      - name: Smoke test the test environment
+        working-directory: mootmaker-release
+        env:
+          CI: 'true'
+        run: ./smoke/run.sh test test
+
   record-outcome:
     name: record-outcome
-    needs: [compute-version, build-api, build-webapp, build-demo-data, tag]
+    needs: [compute-version, build-api, build-webapp, build-demo-data, tag, deploy-test, smoke-test-test]
     # if: always() is the whole mechanism. A normal job stops when something upstream fails; this
     # one must run regardless, or a failed release leaves tags on GitHub with nothing saying so.
     if: always()
@@ -204,6 +367,8 @@ jobs:
           BUILD_API: ${{ needs.build-api.result }}
           BUILD_WEBAPP: ${{ needs.build-webapp.result }}
           BUILD_DEMO_DATA: ${{ needs.build-demo-data.result }}
+          DEPLOY_TEST: ${{ needs.deploy-test.result }}
+          SMOKE_TEST: ${{ needs.smoke-test-test.result }}
         run: |
           set -euo pipefail
           run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
@@ -216,6 +381,8 @@ jobs:
             echo "| build+acceptance mootmaker-api | ${BUILD_API} |"
             echo "| build+acceptance mootmaker-webapp | ${BUILD_WEBAPP} |"
             echo "| build+acceptance mootmaker-demo-data | ${BUILD_DEMO_DATA} |"
+            echo "| deploy-to-test | ${DEPLOY_TEST} |"
+            echo "| smoke-test-test | ${SMOKE_TEST} |"
             echo
             echo "| Component | Commit |"
             echo "|---|---|"
@@ -231,7 +398,8 @@ jobs:
           # naming it, so the tag is never orphaned. If it was not, there is no version to record
           # and an issue is the honest artifact.
           if [ "${TAG_PUSHED}" = "true" ] && [ "${BUILD_API}" = "success" ] \
-             && [ "${BUILD_WEBAPP}" = "success" ] && [ "${BUILD_DEMO_DATA}" = "success" ]; then
+             && [ "${BUILD_WEBAPP}" = "success" ] && [ "${BUILD_DEMO_DATA}" = "success" ] \
+             && [ "${DEPLOY_TEST}" = "success" ] && [ "${SMOKE_TEST}" = "success" ]; then
             gh release create "v${VERSION}" --repo "$GITHUB_REPOSITORY" \
               --title "v${VERSION}" --notes-file body.md
             echo "Published release v${VERSION}"
