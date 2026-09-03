@@ -360,6 +360,18 @@ jobs:
           cache: npm
           cache-dependency-path: mootmaker-release/package-lock.json
 
+      # smoke/run.sh reads Terraform outputs (the site URL, and the shared SQS queue URL) and
+      # sources mootmaker-api's authenticate.sh, and the mutating suite polls SQS for real
+      # verification emails - all of which need AWS credentials. The job declared id-token: write
+      # but never exchanged it, so run.sh failed immediately with "No valid credential sources
+      # found". The deploy jobs had this step; the smoke jobs were written from their shape and
+      # dropped it.
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::431071856068:role/mootmaker-release-github-actions-deploy
+          aws-region: us-east-1
+
       - name: Install smoke-test dependencies
         working-directory: mootmaker-release
         run: npm ci
@@ -494,6 +506,18 @@ jobs:
           node-version: '24'
           cache: npm
           cache-dependency-path: mootmaker-release/package-lock.json
+
+      # smoke/run.sh reads Terraform outputs (the site URL, and the shared SQS queue URL) and
+      # sources mootmaker-api's authenticate.sh, and the mutating suite polls SQS for real
+      # verification emails - all of which need AWS credentials. The job declared id-token: write
+      # but never exchanged it, so run.sh failed immediately with "No valid credential sources
+      # found". The deploy jobs had this step; the smoke jobs were written from their shape and
+      # dropped it.
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::431071856068:role/mootmaker-release-github-actions-deploy
+          aws-region: us-east-1
 
       - name: Install smoke-test dependencies
         working-directory: mootmaker-release
@@ -635,6 +659,18 @@ jobs:
           node-version: '24'
           cache: npm
           cache-dependency-path: mootmaker-release/package-lock.json
+
+      # smoke/run.sh reads Terraform outputs (the site URL, and the shared SQS queue URL) and
+      # sources mootmaker-api's authenticate.sh, and the mutating suite polls SQS for real
+      # verification emails - all of which need AWS credentials. The job declared id-token: write
+      # but never exchanged it, so run.sh failed immediately with "No valid credential sources
+      # found". The deploy jobs had this step; the smoke jobs were written from their shape and
+      # dropped it.
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::431071856068:role/mootmaker-release-github-actions-deploy
+          aws-region: us-east-1
 
       - name: Install smoke-test dependencies
         working-directory: mootmaker-release
