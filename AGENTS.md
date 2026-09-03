@@ -6,13 +6,22 @@ on merge to `main`.
 
 **Start by reading [README.md](README.md)**, then
 [`../mootmaker/designs/ci-cd-pipeline.md`](https://github.com/geoffweatherall/mootmaker/blob/main/designs/ci-cd-pipeline.md)
-for the actual design — this repo is currently just its scaffolded home, not yet an implementation.
+for the actual design.
 
 ## Working here
 
-- **Nothing here runs yet.** The design is still `Drafting`, with blocking open questions
-  unresolved (see the design doc's "Open questions"). Don't build `release.yml` ahead of those
-  being settled — check the design doc's own Status before starting.
+- **`release.yml` exists and is partially built (2026-09-03).** The design's four blocking open
+  questions are resolved and build-out is under way under the standing authorization in the design's
+  "Execution authorization for this build-out" section. Version computation, the three component
+  builds, tagging and the release record are built; the `test`/`production` promotion stages and
+  rollback are not, because they depend on the smoke suites and on `test` being stood up. Check the
+  README's stage table before assuming any given stage works.
+- **Running `release.yml` today tags and publishes, but deploys nothing.** It will push real `vX.Y.Z`
+  tags to all four repositories and create a GitHub Release. Those tags are not reused if a later
+  attempt fails, by design — but they are real, so do not dispatch it casually to "see what happens".
+- **The PAT is the one long-lived credential in this design.** `RELEASE_TAG_PAT` is `contents: write`
+  on exactly four repos and is used in exactly one place, the `tag` job. Its value must never be
+  echoed, logged, or pass through a session.
 - **This repo doesn't own any component's build/deploy logic.** `mootmaker-api`,
   `mootmaker-webapp`, and `mootmaker-demo-data` each own their own build-and-deploy as a reusable
   workflow (`on: workflow_call`) in their own repo; whatever lands here calls those, rather than
