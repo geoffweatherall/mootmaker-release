@@ -645,6 +645,11 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      # Decision 5's third case opens an ISSUE when no tag was ever pushed, and that needs
+      # issues:write - contents:write is not enough. The first release exercised only the
+      # tagged-then-failed case, so this gap stayed hidden until a run failed before tagging and
+      # record-outcome itself died with "Resource not accessible by integration (createIssue)".
+      issues: write
     steps:
       - name: Publish the release record
         env:
