@@ -1,0 +1,246 @@
+# The mootmaker release pipeline. See mootmaker/designs/ci-cd-pipeline.md.
+#
+# Nothing here runs automatically. A merge to main in any component repo changes nothing until
+# someone deliberately starts a release (Decision 1). The shape is:
+#
+#   compute-version -> build-{api,webapp,demo-data} -> tag -> deploy test -> smoke test
+#                   -> deploy production -> smoke production -> record-outcome
+#
+# Two properties are load-bearing and easy to break by rearranging jobs:
+#
+#   1. TAGS ARE PUSHED ONLY AFTER ALL THREE BUILDS PASS (Decision 4), so a tag always names a
+#      commit that was actually proven. A release that fails later simply never reuses its version
+#      number - the next attempt computes a fresh one. Nothing is ever un-tagged.
+#
+#   2. record-outcome RUNS WITH if: always() AND BRANCHES ON THE TAG JOB'S OWN OUTPUT, never on
+#      whether later jobs succeeded (Decision 5). A run can fail after tagging for reasons that
+#      have nothing to do with whether the tags are real, and the failure mode this guards against
+#      is tags existing on GitHub with nothing recording that they do.
+#
+# AWS access is via OIDC. Note the deploy role trusts this workflow at refs/heads/main, and that
+# entry is what carries EVERY release: a reusable workflow called with `uses:` presents the
+# CALLER's sub, so when a component's release-build.yml runs below, the token says
+# mootmaker-release@refs/heads/main - not the component. The component refs/tags/v* entries exist
+# only for standalone proving runs.
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Which part of the version to increment.
+        required: true
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+
+# Queue overlapping triggers rather than cancelling. A human and an AI both starting a release, or
+# a double-click, must not race on reading the current version, on tagging, or on deploying to the
+# same standing environment. cancel-in-progress is deliberately false: killing a release mid
+# `terraform apply` is a worse outcome than making the second trigger wait (Decision 1).
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # Reads the current version from this repo's own GitHub Releases - not a version file, and not by
+  # inspecting tags in one of the component repos, which would raise "which of the three do we
+  # ask?" (Decision 4). Also pins each component's main SHA ONCE here, so every later stage builds
+  # and tags the same commit even if something merges mid-release.
+  compute-version:
+    name: compute-version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.next.outputs.version }}
+      api-sha: ${{ steps.shas.outputs.api }}
+      webapp-sha: ${{ steps.shas.outputs.webapp }}
+      demo-data-sha: ${{ steps.shas.outputs.demo_data }}
+    steps:
+      - name: Compute the next version
+        id: next
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUMP: ${{ inputs.bump }}
+        run: |
+          set -euo pipefail
+          # No releases yet means this is the first one. Treat the implicit previous version as
+          # 0.0.0, so the first patch release is 0.0.1 and the first minor is 0.1.0.
+          latest="$(gh release list --repo "$GITHUB_REPOSITORY" --limit 1 --json tagName \
+            --jq '.[0].tagName // "v0.0.0"')"
+          echo "Latest release: ${latest}"
+
+          current="${latest#v}"
+          IFS=. read -r major minor patch <<< "${current}"
+          case "$BUMP" in
+            major) major=$((major + 1)); minor=0; patch=0 ;;
+            minor) minor=$((minor + 1)); patch=0 ;;
+            patch) patch=$((patch + 1)) ;;
+            *) echo "Unknown bump: $BUMP" >&2; exit 1 ;;
+          esac
+
+          version="${major}.${minor}.${patch}"
+          echo "Releasing: v${version}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Pin each component's commit
+        id: shas
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for repo in mootmaker-api mootmaker-webapp mootmaker-demo-data; do
+            sha="$(gh api "repos/${GITHUB_REPOSITORY_OWNER}/${repo}/commits/main" --jq .sha)"
+            echo "${repo}: ${sha}"
+            echo "${repo//mootmaker-/}=${sha}" | tr '-' '_' >> "$GITHUB_OUTPUT"
+          done
+
+  # Stage 1: build, unit test and acceptance test every component against its own fresh ephemeral
+  # environment, in parallel. Each uploads the artifact that later stages promote unchanged - it is
+  # never rebuilt per environment (Decision 8). `uses: ...@main` selects the workflow DEFINITION;
+  # the ref input selects which COMMIT to build.
+  build-api:
+    name: build-api
+    needs: compute-version
+    permissions:
+      id-token: write
+      contents: read
+    uses: geoffweatherall/mootmaker-api/.github/workflows/release-build.yml@main
+    with:
+      version: ${{ needs.compute-version.outputs.version }}
+      ref: ${{ needs.compute-version.outputs.api-sha }}
+
+  build-webapp:
+    name: build-webapp
+    needs: compute-version
+    permissions:
+      id-token: write
+      contents: read
+    uses: geoffweatherall/mootmaker-webapp/.github/workflows/release-build.yml@main
+    with:
+      version: ${{ needs.compute-version.outputs.version }}
+      ref: ${{ needs.compute-version.outputs.webapp-sha }}
+
+  build-demo-data:
+    name: build-demo-data
+    needs: compute-version
+    permissions:
+      id-token: write
+      contents: read
+    uses: geoffweatherall/mootmaker-demo-data/.github/workflows/release-build.yml@main
+    with:
+      version: ${{ needs.compute-version.outputs.version }}
+      ref: ${{ needs.compute-version.outputs.demo-data-sha }}
+
+  # Only reached when all three builds are green, which is the whole point: a tag marks a commit
+  # that was proven, never one that failed (Decision 4). This is the one place a cross-repo write
+  # is unavoidable, and the only place the PAT is used (Decision 3).
+  tag:
+    name: tag
+    needs: [compute-version, build-api, build-webapp, build-demo-data]
+    runs-on: ubuntu-latest
+    outputs:
+      # record-outcome branches on this rather than on later jobs' success. Set the moment the tags
+      # land, so "were tags pushed?" is answerable even if a later stage fails outright.
+      pushed: ${{ steps.push.outputs.pushed }}
+      version: ${{ needs.compute-version.outputs.version }}
+    steps:
+      - name: Push the version tag to every repository
+        id: push
+        env:
+          # contents: write, scoped to exactly these four repositories and nothing else. The one
+          # accepted long-lived-credential exception in this design (Decision 3) - its value never
+          # passes through a session or a log.
+          GH_TOKEN: ${{ secrets.RELEASE_TAG_PAT }}
+          VERSION: ${{ needs.compute-version.outputs.version }}
+          API_SHA: ${{ needs.compute-version.outputs.api-sha }}
+          WEBAPP_SHA: ${{ needs.compute-version.outputs.webapp-sha }}
+          DEMO_DATA_SHA: ${{ needs.compute-version.outputs.demo-data-sha }}
+        run: |
+          set -euo pipefail
+          tag="v${VERSION}"
+
+          # Each component is tagged at the exact commit its build reported, not at whatever main
+          # points to now - a merge landing mid-release must not be able to acquire this tag.
+          tag_repo() {
+            local repo="$1" sha="$2"
+            echo "Tagging ${repo} at ${sha} as ${tag}"
+            gh api --method POST "repos/${GITHUB_REPOSITORY_OWNER}/${repo}/git/refs" \
+              -f "ref=refs/tags/${tag}" -f "sha=${sha}" > /dev/null
+          }
+
+          tag_repo mootmaker-api "${API_SHA}"
+          tag_repo mootmaker-webapp "${WEBAPP_SHA}"
+          tag_repo mootmaker-demo-data "${DEMO_DATA_SHA}"
+          # This repo has no deployable artifact either, but it is where the Release is published,
+          # so keeping its tag and that Release together is simpler than splitting them.
+          tag_repo mootmaker-release "${GITHUB_SHA}"
+
+          echo "pushed=true" >> "$GITHUB_OUTPUT"
+
+  record-outcome:
+    name: record-outcome
+    needs: [compute-version, build-api, build-webapp, build-demo-data, tag]
+    # if: always() is the whole mechanism. A normal job stops when something upstream fails; this
+    # one must run regardless, or a failed release leaves tags on GitHub with nothing saying so.
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Publish the release record
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.compute-version.outputs.version }}
+          # Deliberately the tag job's OWN output, not needs.tag.result. A run can fail after
+          # tagging for reasons unrelated to whether the tags are real (Decision 5).
+          TAG_PUSHED: ${{ needs.tag.outputs.pushed }}
+          BUMP: ${{ inputs.bump }}
+          API_SHA: ${{ needs.compute-version.outputs.api-sha }}
+          WEBAPP_SHA: ${{ needs.compute-version.outputs.webapp-sha }}
+          DEMO_DATA_SHA: ${{ needs.compute-version.outputs.demo-data-sha }}
+          BUILD_API: ${{ needs.build-api.result }}
+          BUILD_WEBAPP: ${{ needs.build-webapp.result }}
+          BUILD_DEMO_DATA: ${{ needs.build-demo-data.result }}
+        run: |
+          set -euo pipefail
+          run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+          {
+            echo "Bump: \`${BUMP}\`"
+            echo
+            echo "| Stage | Result |"
+            echo "|---|---|"
+            echo "| build+acceptance mootmaker-api | ${BUILD_API} |"
+            echo "| build+acceptance mootmaker-webapp | ${BUILD_WEBAPP} |"
+            echo "| build+acceptance mootmaker-demo-data | ${BUILD_DEMO_DATA} |"
+            echo
+            echo "| Component | Commit |"
+            echo "|---|---|"
+            echo "| mootmaker-api | \`${API_SHA}\` |"
+            echo "| mootmaker-webapp | \`${WEBAPP_SHA}\` |"
+            echo "| mootmaker-demo-data | \`${DEMO_DATA_SHA}\` |"
+            echo
+            echo "[Actions run](${run_url})"
+          } > body.md
+
+          # Three cases, exactly as Decision 5 sets out. The distinction that matters is whether a
+          # version number was ever claimed by a tag: if it was, the record has to be a Release
+          # naming it, so the tag is never orphaned. If it was not, there is no version to record
+          # and an issue is the honest artifact.
+          if [ "${TAG_PUSHED}" = "true" ] && [ "${BUILD_API}" = "success" ] \
+             && [ "${BUILD_WEBAPP}" = "success" ] && [ "${BUILD_DEMO_DATA}" = "success" ]; then
+            gh release create "v${VERSION}" --repo "$GITHUB_REPOSITORY" \
+              --title "v${VERSION}" --notes-file body.md
+            echo "Published release v${VERSION}"
+          elif [ "${TAG_PUSHED}" = "true" ]; then
+            gh release create "v${VERSION}" --repo "$GITHUB_REPOSITORY" \
+              --title "v${VERSION} (FAILED)" --notes-file body.md --prerelease
+            echo "Published FAILED release record for v${VERSION}"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" \
+              --title "Release attempt failed before tagging" --body-file body.md
+            echo "No tags were pushed; opened an issue instead"
+          fi
