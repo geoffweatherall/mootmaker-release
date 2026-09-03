@@ -1,0 +1,22 @@
+{
+  "name": "mootmaker-release",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Smoke-test suites for the mootmaker release pipeline. See ../mootmaker/designs/ci-cd-pipeline.md Decision 9.",
+  "scripts": {
+    "smoke:test": "playwright test -c smoke/playwright.config.ts --project=test-stage",
+    "smoke:production": "playwright test -c smoke/playwright.config.ts --project=production-stage",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@aws-sdk/client-sqs": "^3.940.0",
+    "mailparser": "^3.7.4"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.61.1",
+    "@types/mailparser": "^3.4.6",
+    "@types/node": "^24.13.2",
+    "typescript": "~6.0.2"
+  }
+}
