@@ -55,6 +55,9 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.next.outputs.version }}
+      # The tag rollback targets. Empty when this is the first release, which is the one case
+      # rollback cannot help with - there is no known-good version to go back to.
+      previous: ${{ steps.next.outputs.previous }}
       api-sha: ${{ steps.shas.outputs.api }}
       webapp-sha: ${{ steps.shas.outputs.webapp }}
       demo-data-sha: ${{ steps.shas.outputs.demo_data }}
@@ -68,8 +71,15 @@ jobs:
           set -euo pipefail
           # No releases yet means this is the first one. Treat the implicit previous version as
           # 0.0.0, so the first patch release is 0.0.1 and the first minor is 0.1.0.
-          latest="$(gh release list --repo "$GITHUB_REPOSITORY" --limit 1 --json tagName \
-            --jq '.[0].tagName // "v0.0.0"')"
+          # This runs BEFORE record-outcome publishes this release, so "latest" is still the
+          # previous one - which is exactly what rollback needs. Empty rather than v0.0.0 when
+          # there is genuinely no prior release, so rollback can tell "nothing to go back to"
+          # apart from "go back to 0.0.0", which is not a thing that was ever deployed.
+          previous="$(gh release list --repo "$GITHUB_REPOSITORY" --limit 1 --json tagName \
+            --jq '.[0].tagName // ""')"
+          echo "previous=${previous}" >> "$GITHUB_OUTPUT"
+
+          latest="${previous:-v0.0.0}"
           echo "Latest release: ${latest}"
 
           current="${latest#v}"
@@ -343,9 +353,281 @@ jobs:
           CI: 'true'
         run: ./smoke/run.sh test test
 
+  # Only reached when test's smoke test passed. Identical in shape to deploy-test, promoting the
+  # SAME artifacts again - the third deployment of one build, never a rebuild (Decision 8).
+  deploy-production:
+    name: deploy-production
+    needs: [compute-version, smoke-test-test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: geoffweatherall/mootmaker-api
+          ref: ${{ needs.compute-version.outputs.api-sha }}
+          path: mootmaker-api
+
+      - uses: actions/checkout@v4
+        with:
+          repository: geoffweatherall/mootmaker-webapp
+          ref: ${{ needs.compute-version.outputs.webapp-sha }}
+          path: mootmaker-webapp
+
+      - uses: actions/checkout@v4
+        with:
+          repository: geoffweatherall/mootmaker-demo-data
+          ref: ${{ needs.compute-version.outputs.demo-data-sha }}
+          path: mootmaker-demo-data
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::431071856068:role/mootmaker-release-github-actions-deploy
+          aws-region: us-east-1
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: mootmaker-api-${{ needs.compute-version.outputs.version }}
+          path: mootmaker-api/impl/target
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: mootmaker-demo-data-${{ needs.compute-version.outputs.version }}
+          path: mootmaker-demo-data/impl/target
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: mootmaker-webapp-${{ needs.compute-version.outputs.version }}
+          path: mootmaker-webapp/webapp/dist
+
+      - name: Deploy mootmaker-api to production
+        working-directory: mootmaker-api
+        run: ./deploy.sh production --skip-build
+
+      - name: Deploy mootmaker-webapp to production
+        working-directory: mootmaker-webapp
+        run: ./deploy.sh production --skip-build
+
+      - name: Deploy mootmaker-demo-data to production
+        working-directory: mootmaker-demo-data
+        run: ./deploy.sh production --skip-build
+
+      # Production is NOT seeded here. demo-data already runs there daily on its own EventBridge
+      # schedule, and its concerns are idempotent - so a release does not need to force a run, and
+      # forcing one would be a write to production that the release does not need to make.
+
+  # Strictly read-only (Decision 9). Signs in as the published demo user, navigates, confirms reads
+  # display. No signup, no deletion, no password reset, no meeting creation - production takes no
+  # writes from this layer at all, which is why there is no stray-data accumulation to manage.
+  smoke-test-production:
+    name: smoke-test-production
+    needs: [compute-version, deploy-production]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: mootmaker-release
+
+      - uses: actions/checkout@v4
+        with:
+          repository: geoffweatherall/mootmaker-api
+          ref: ${{ needs.compute-version.outputs.api-sha }}
+          path: mootmaker-api
+
+      - uses: actions/checkout@v4
+        with:
+          repository: geoffweatherall/mootmaker-webapp
+          ref: ${{ needs.compute-version.outputs.webapp-sha }}
+          path: mootmaker-webapp
+
+      - uses: actions/checkout@v4
+        with:
+          repository: geoffweatherall/mootmaker-email-testing
+          path: mootmaker-email-testing
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: mootmaker-release/package-lock.json
+
+      - name: Install smoke-test dependencies
+        working-directory: mootmaker-release
+        run: npm ci
+
+      - name: Install Playwright browser
+        working-directory: mootmaker-release
+        run: npx playwright install --with-deps chrome
+
+      - name: Smoke test production
+        working-directory: mootmaker-release
+        env:
+          CI: 'true'
+        run: ./smoke/run.sh production production
+
+  # Decision 10. test passing while production fails implies something environment-specific to
+  # production - a data shape, a config difference, a race - rather than a code defect test should
+  # have caught. That is exactly the case an automatic revert is safe for, because the previous
+  # version is known-good by construction: it was itself a release that reached production.
+  #
+  # Rollback REBUILDS from the previous tag rather than promoting its stored artifacts. That is a
+  # deliberate departure from build-once: Actions artifacts expire (30 days here), so a rollback
+  # that depended on them would work until the day it was most needed. A tag is permanent, and the
+  # design's own wording is "re-running the deploy step against the previous release's tag".
+  #
+  # The masking risk - an automatic redeploy hiding a data-shape problem that old code does not
+  # actually fix - is accepted knowingly (OQ-2). It is never silent: record-outcome reports that a
+  # rollback happened.
+  rollback-production:
+    name: rollback-production
+    needs: [compute-version, deploy-production, smoke-test-production]
+    if: failure() && needs.smoke-test-production.result == 'failure'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Refuse to roll back with no previous release
+        if: needs.compute-version.outputs.previous == ''
+        run: |
+          echo "production's smoke test failed, but there is no previous release to roll back to." >&2
+          echo "production is left as deployed and needs manual attention." >&2
+          exit 1
+
+      # The previous release's tag exists in every component repo, pushed by that release's own
+      # tag job - so one tag name resolves the whole set.
+      - uses: actions/checkout@v4
+        with:
+          repository: geoffweatherall/mootmaker-api
+          ref: ${{ needs.compute-version.outputs.previous }}
+          path: mootmaker-api
+
+      - uses: actions/checkout@v4
+        with:
+          repository: geoffweatherall/mootmaker-webapp
+          ref: ${{ needs.compute-version.outputs.previous }}
+          path: mootmaker-webapp
+
+      - uses: actions/checkout@v4
+        with:
+          repository: geoffweatherall/mootmaker-demo-data
+          ref: ${{ needs.compute-version.outputs.previous }}
+          path: mootmaker-demo-data
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::431071856068:role/mootmaker-release-github-actions-deploy
+          aws-region: us-east-1
+
+      # No --skip-build: these rebuild from the tagged source, for the artifact-expiry reason above.
+      - name: Redeploy the previous mootmaker-api
+        working-directory: mootmaker-api
+        run: ./deploy.sh production
+
+      - name: Redeploy the previous mootmaker-webapp
+        working-directory: mootmaker-webapp
+        run: ./deploy.sh production
+
+      - name: Redeploy the previous mootmaker-demo-data
+        working-directory: mootmaker-demo-data
+        run: ./deploy.sh production
+
+  # Re-runs the read-only suite against the rolled-back production. If THIS fails, production is
+  # broken in a way redeploying old code did not fix - which is the masking scenario made visible
+  # rather than hidden.
+  smoke-test-rollback:
+    name: smoke-test-rollback
+    needs: [compute-version, rollback-production]
+    if: always() && needs.rollback-production.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: mootmaker-release
+
+      - uses: actions/checkout@v4
+        with:
+          repository: geoffweatherall/mootmaker-api
+          ref: ${{ needs.compute-version.outputs.previous }}
+          path: mootmaker-api
+
+      - uses: actions/checkout@v4
+        with:
+          repository: geoffweatherall/mootmaker-webapp
+          ref: ${{ needs.compute-version.outputs.previous }}
+          path: mootmaker-webapp
+
+      - uses: actions/checkout@v4
+        with:
+          repository: geoffweatherall/mootmaker-email-testing
+          path: mootmaker-email-testing
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: mootmaker-release/package-lock.json
+
+      - name: Install smoke-test dependencies
+        working-directory: mootmaker-release
+        run: npm ci
+
+      - name: Install Playwright browser
+        working-directory: mootmaker-release
+        run: npx playwright install --with-deps chrome
+
+      - name: Smoke test the rolled-back production
+        working-directory: mootmaker-release
+        env:
+          CI: 'true'
+        run: ./smoke/run.sh production production
+
   record-outcome:
     name: record-outcome
-    needs: [compute-version, build-api, build-webapp, build-demo-data, tag, deploy-test, smoke-test-test]
+    needs: [compute-version, build-api, build-webapp, build-demo-data, tag, deploy-test, smoke-test-test, deploy-production, smoke-test-production, rollback-production, smoke-test-rollback]
     # if: always() is the whole mechanism. A normal job stops when something upstream fails; this
     # one must run regardless, or a failed release leaves tags on GitHub with nothing saying so.
     if: always()
@@ -369,6 +651,11 @@ jobs:
           BUILD_DEMO_DATA: ${{ needs.build-demo-data.result }}
           DEPLOY_TEST: ${{ needs.deploy-test.result }}
           SMOKE_TEST: ${{ needs.smoke-test-test.result }}
+          DEPLOY_PROD: ${{ needs.deploy-production.result }}
+          SMOKE_PROD: ${{ needs.smoke-test-production.result }}
+          ROLLBACK: ${{ needs.rollback-production.result }}
+          SMOKE_ROLLBACK: ${{ needs.smoke-test-rollback.result }}
+          PREVIOUS: ${{ needs.compute-version.outputs.previous }}
         run: |
           set -euo pipefail
           run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
@@ -383,7 +670,24 @@ jobs:
             echo "| build+acceptance mootmaker-demo-data | ${BUILD_DEMO_DATA} |"
             echo "| deploy-to-test | ${DEPLOY_TEST} |"
             echo "| smoke-test-test | ${SMOKE_TEST} |"
+            echo "| deploy-to-production | ${DEPLOY_PROD} |"
+            echo "| smoke-test-production | ${SMOKE_PROD} |"
             echo
+
+            # A rollback is never left implicit in the record. OQ-2 accepted that an automatic
+            # revert can mask a data-shape problem old code does not fix - the mitigation is that
+            # it is always stated here, so the masking is never silent.
+            if [ "${ROLLBACK}" != "skipped" ]; then
+              echo "> **Production was rolled back to \`${PREVIOUS}\`.**"
+              echo ">"
+              echo "> The production smoke test failed on this version, so the previous release was"
+              echo "> redeployed automatically (Decision 10). Rollback: \`${ROLLBACK}\`."
+              echo "> Smoke test after rollback: \`${SMOKE_ROLLBACK}\`."
+              echo ">"
+              echo "> A rollback restores known-good code. It does NOT prove the underlying problem"
+              echo "> is fixed - if the cause was environment- or data-shaped, it is still there."
+              echo
+            fi
             echo "| Component | Commit |"
             echo "|---|---|"
             echo "| mootmaker-api | \`${API_SHA}\` |"
@@ -399,7 +703,8 @@ jobs:
           # and an issue is the honest artifact.
           if [ "${TAG_PUSHED}" = "true" ] && [ "${BUILD_API}" = "success" ] \
              && [ "${BUILD_WEBAPP}" = "success" ] && [ "${BUILD_DEMO_DATA}" = "success" ] \
-             && [ "${DEPLOY_TEST}" = "success" ] && [ "${SMOKE_TEST}" = "success" ]; then
+             && [ "${DEPLOY_TEST}" = "success" ] && [ "${SMOKE_TEST}" = "success" ] \
+             && [ "${DEPLOY_PROD}" = "success" ] && [ "${SMOKE_PROD}" = "success" ]; then
             gh release create "v${VERSION}" --repo "$GITHUB_REPOSITORY" \
               --title "v${VERSION}" --notes-file body.md
             echo "Published release v${VERSION}"
