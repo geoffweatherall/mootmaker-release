@@ -48,7 +48,7 @@ test.describe('test-stage smoke', () => {
     await page.getByLabel('Verification code').fill(code)
     await page.getByRole('button', { name: 'Confirm' }).click()
 
-    await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible()
+    await expect(page.getByText('Sign out')).toBeVisible()
   })
 
   test('the new account can sign in', async ({ page }) => {
@@ -60,17 +60,22 @@ test.describe('test-stage smoke', () => {
 
     // The test environment is seeded by demo-data, so there is real data to read. This is the read
     // half of the check - the write half is the meeting created below.
-    await page.getByRole('link', { name: 'Rooms', exact: true }).click()
-    await expect(page.getByRole('heading', { name: 'Rooms' })).toBeVisible()
+    //
+    // Room Availability and Calendar, NOT Rooms/People: those are admin-only sections of
+    // /settings, and the account this suite just signed up is a standard user. Asserting on them
+    // would fail for an authorization reason while looking like a broken read.
+    await page.getByRole('link', { name: 'Room Availability' }).click()
+    await expect(page.getByRole('heading', { name: 'Room Availability' })).toBeVisible()
 
     await page.getByRole('link', { name: 'Calendar', exact: true }).click()
-    await expect(page.getByRole('heading', { name: 'Calendar' })).toBeVisible()
   })
 
   test('a meeting can be created', async ({ page }) => {
     await signIn(page, account.email, account.password)
 
-    await page.getByRole('button', { name: 'Add Meeting' }).click()
+    // A link, not a button, and there is more than one entry point to the form - hence .first().
+    await page.getByRole('link', { name: 'Add Meeting' }).first().click()
+    await expect(page.getByRole('heading', { name: 'Add Meeting' })).toBeVisible()
 
     const subject = `Smoke test ${Date.now()}`
     await page.getByLabel('Subject').fill(subject)
@@ -79,6 +84,12 @@ test.describe('test-stage smoke', () => {
     // demo-data generated, so asserting on a specific room name would make this suite depend on
     // demo data's content rather than on the app working.
     await page.getByRole('button', { name: 'Suggest a room' }).click()
+
+    // Wait for the suggestion to actually land before saving. Clicking Save immediately races it:
+    // the form validates with Room still empty, shows "Please select a room.", and the suggestion
+    // then fills the field a moment later - so the page ends up looking correct while the save
+    // never happened.
+    await expect(page.getByRole('combobox', { name: 'Room' })).not.toHaveValue('')
 
     await page.getByRole('button', { name: 'Save' }).click()
 
@@ -102,7 +113,7 @@ test.describe('test-stage smoke', () => {
     await page.getByLabel('New password').fill(newPassword)
     await page.getByRole('button', { name: 'Reset password' }).click()
 
-    await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible()
+    await expect(page.getByText('Sign out')).toBeVisible()
 
     // Keep the module-level account in step, so the deletion test below can still sign in.
     account.password = newPassword
@@ -112,13 +123,20 @@ test.describe('test-stage smoke', () => {
     await signIn(page, account.email, account.password)
 
     await page.goto('/settings')
-    await page.getByRole('button', { name: 'Delete account' }).click()
-    await page.getByRole('button', { name: 'Delete my account' }).click()
 
-    // Signed out is the observable outcome of a successful deletion. Cleaning up after itself is
-    // not incidental tidiness - it is what stops the test environment accumulating a dead account
-    // per release, which would eventually make the People list meaningless.
-    await expect(page.getByRole('button', { name: 'Sign in' })).toBeVisible()
+    // "Delete account" is the section HEADING, not a control. The button that opens the dialog and
+    // the button that confirms inside it share the name "Delete my account", so the second is
+    // scoped to the dialog rather than disambiguated by position.
+    await page.getByRole('button', { name: 'Delete my account' }).click()
+    await page.getByRole('dialog').getByRole('button', { name: 'Delete my account' }).click()
+
+    // Signed out is the observable outcome of a successful deletion. Asserted as the ABSENCE of
+    // "Sign out" rather than the presence of a sign-in control, which differs between the nav link
+    // and the home page's own form - absence is unambiguous either way.
+    //
+    // Cleaning up after itself is not incidental tidiness: it is what stops the test environment
+    // accumulating a dead account per release, which would eventually make People meaningless.
+    await expect(page.getByText('Sign out')).toHaveCount(0)
   })
 })
 
@@ -127,5 +145,5 @@ async function signIn(page: import('@playwright/test').Page, email: string, pass
   await page.getByLabel('Email').fill(email)
   await page.getByLabel('Password').fill(password)
   await page.getByRole('button', { name: 'Sign in' }).click()
-  await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible()
+  await expect(page.getByText('Sign out')).toBeVisible()
 }
