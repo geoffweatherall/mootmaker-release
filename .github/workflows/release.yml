@@ -71,16 +71,27 @@ jobs:
           set -euo pipefail
           # No releases yet means this is the first one. Treat the implicit previous version as
           # 0.0.0, so the first patch release is 0.0.1 and the first minor is 0.1.0.
-          # This runs BEFORE record-outcome publishes this release, so "latest" is still the
-          # previous one - which is exactly what rollback needs. Empty rather than v0.0.0 when
-          # there is genuinely no prior release, so rollback can tell "nothing to go back to"
-          # apart from "go back to 0.0.0", which is not a thing that was ever deployed.
-          previous="$(gh release list --repo "$GITHUB_REPOSITORY" --limit 1 --json tagName \
-            --jq '.[0].tagName // ""')"
-          echo "previous=${previous}" >> "$GITHUB_OUTPUT"
+          # Two DIFFERENT questions, deliberately answered from different queries.
+          #
+          # 1. What number comes next? That must consider EVERY release, failed ones included -
+          #    a failed attempt consumed its version and must never be reused (Decision 4).
+          latest="$(gh release list --repo "$GITHUB_REPOSITORY" --limit 1 --json tagName \
+            --jq '.[0].tagName // "v0.0.0"')"
+          echo "Latest release (including failed attempts): ${latest}"
 
-          latest="${previous:-v0.0.0}"
-          echo "Latest release: ${latest}"
+          # 2. What would rollback target? That must be the last release that actually REACHED
+          #    production, which is not the same thing. record-outcome publishes a failed attempt
+          #    as a prerelease, so excluding prereleases is what distinguishes them. Rolling back
+          #    to a version that never deployed would restore something never known to work - the
+          #    opposite of what Decision 10 relies on ("the previous version is known-good by
+          #    construction: it was itself a release that reached production").
+          #
+          # Empty rather than v0.0.0 when nothing has ever succeeded, so rollback can tell
+          # "nothing to go back to" from "go back to 0.0.0", which was never deployed either.
+          previous="$(gh release list --repo "$GITHUB_REPOSITORY" --limit 1 --exclude-pre-releases \
+            --json tagName --jq '.[0].tagName // ""')"
+          echo "Last successful release (rollback target): ${previous:-<none>}"
+          echo "previous=${previous}" >> "$GITHUB_OUTPUT"
 
           current="${latest#v}"
           IFS=. read -r major minor patch <<< "${current}"
