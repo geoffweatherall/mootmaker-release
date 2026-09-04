@@ -1,3 +1,7 @@
 node_modules/
 test-results/
 playwright-report/
+
+# Terraform working files - state lives in S3 (see deploy/terraform/backend.hcl)
+.terraform/
+.terraform.lock.hcl
