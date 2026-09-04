@@ -165,3 +165,12 @@ async function signIn(page: import('@playwright/test').Page, email: string, pass
   await page.getByRole('button', { name: 'Sign in' }).click()
   await expect(page.getByText('Sign out')).toBeVisible()
 }
+
+// TEMPORARY - deliberately fails, to satisfy the Definition of done's requirement that a
+// test-stage smoke failure be exercised at least once, confirming the release stops before
+// production and leaves test inspectable (Decision 6a). Placed last so every real test above runs
+// first: the point is that the release halts after a genuine suite run, not that it never got
+// there. Removed immediately after the exercise.
+test('DELIBERATE FAILURE - proves the release halts before production', async () => {
+  expect(true, 'intentional failure exercising Decision 6a').toBe(false)
+})
