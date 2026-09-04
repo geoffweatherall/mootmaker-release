@@ -233,6 +233,11 @@ jobs:
       id-token: write
       contents: read
     steps:
+      # This repo, for scripts/ship-to-cloudwatch.sh. The smoke jobs already check it out for the
+      # suites themselves; the deploy jobs need it only for the shipping script.
+      - uses: actions/checkout@v4
+        with:
+          path: mootmaker-release
       - uses: actions/checkout@v4
         with:
           repository: geoffweatherall/mootmaker-api
@@ -288,17 +293,26 @@ jobs:
       # Order matters and is not arbitrary. mootmaker-api's Terraform creates the SSM parameters
       # demo-data reads at runtime and the Cognito/AppSync outputs the webapp's deploy reads, so it
       # goes first. demo-data last, because seeding it needs the API live.
+      # `set -o pipefail` is load-bearing on every one of these. GitHub runs steps with `bash -e`
+      # but NOT pipefail, so `./deploy.sh | tee` would report the exit code of tee - always 0 -
+      # and a failed deploy would sail through as success.
       - name: Deploy mootmaker-api to test
         working-directory: mootmaker-api
-        run: ./deploy.sh test --skip-build
+        run: |
+          set -o pipefail
+          ./deploy.sh test --skip-build 2>&1 | tee "$RUNNER_TEMP/deploy-test-api.log"
 
       - name: Deploy mootmaker-webapp to test
         working-directory: mootmaker-webapp
-        run: ./deploy.sh test --skip-build
+        run: |
+          set -o pipefail
+          ./deploy.sh test --skip-build 2>&1 | tee "$RUNNER_TEMP/deploy-test-webapp.log"
 
       - name: Deploy mootmaker-demo-data to test
         working-directory: mootmaker-demo-data
-        run: ./deploy.sh test --skip-build
+        run: |
+          set -o pipefail
+          ./deploy.sh test --skip-build 2>&1 | tee "$RUNNER_TEMP/deploy-test-demo-data.log"
 
       # NB-2. Deploying demo-data populates nothing - the Lambda only runs when invoked - so the
       # release seeds explicitly rather than waiting for the daily schedule. Without this, the
@@ -315,6 +329,19 @@ jobs:
             --cli-read-timeout 900 \
             --payload '{}' \
             /dev/stdout
+
+      # Decision 11: ship after a version is tagged, which every stage from here on is. if:
+      # always() so a FAILED deploy ships too - that is the output most worth having durably.
+      # ship-to-cloudwatch.sh always exits 0, so a logging hiccup cannot fail the release.
+      - name: Ship deploy-test output to CloudWatch
+        if: always()
+        run: |
+          for c in api webapp demo-data; do
+            mootmaker-release/scripts/ship-to-cloudwatch.sh \
+              "${{ needs.compute-version.outputs.version }}" \
+              deploy-test "mootmaker-$c" test "${{ job.status }}" \
+              "$RUNNER_TEMP/deploy-test-$c.log"
+          done
 
   # A failure here STOPS the release. test is deliberately NOT rolled back, reset or torn down -
   # that would destroy the evidence the environment exists to preserve (Decision 6a). The
@@ -398,7 +425,22 @@ jobs:
         working-directory: mootmaker-release
         env:
           CI: 'true'
-        run: ./smoke/run.sh test test
+        run: |
+          set -o pipefail
+          ./smoke/run.sh test test 2>&1 | tee "$RUNNER_TEMP/smoke-test.log"
+
+      # Playwright's JSON reporter output (Decision 9's `reporter: 'json'` under CI) - test names,
+      # pass/fail, timing, error text. Never trace/video/screenshot: those are binary, run to
+      # hundreds of MB, and PutLogEvents caps one event at 256KB regardless. A failed smoke test
+      # needing a screenshot is an Actions artifact, a separate mechanism entirely.
+      - name: Ship smoke-test-test output to CloudWatch
+        if: always()
+        run: |
+          mootmaker-release/scripts/ship-to-cloudwatch.sh \
+            "${{ needs.compute-version.outputs.version }}" \
+            smoke-test-test mootmaker-release test "${{ job.status }}" \
+            "$RUNNER_TEMP/smoke-test.log"
+
 
       # Decision 9 deliberately turns trace/video/screenshot off to keep the release's log volume
       # small, and that stands - but with all of them off a smoke failure during a release is
@@ -426,6 +468,11 @@ jobs:
       id-token: write
       contents: read
     steps:
+      # This repo, for scripts/ship-to-cloudwatch.sh. The smoke jobs already check it out for the
+      # suites themselves; the deploy jobs need it only for the shipping script.
+      - uses: actions/checkout@v4
+        with:
+          path: mootmaker-release
       - uses: actions/checkout@v4
         with:
           repository: geoffweatherall/mootmaker-api
@@ -473,17 +520,35 @@ jobs:
           name: mootmaker-webapp-${{ needs.compute-version.outputs.version }}
           path: mootmaker-webapp/webapp/dist
 
+      # set -o pipefail on each: GitHub runs steps with `bash -e` but NOT pipefail, so piping to
+      # tee would report tee's exit code and a failed production deploy would pass silently.
       - name: Deploy mootmaker-api to production
         working-directory: mootmaker-api
-        run: ./deploy.sh production --skip-build
+        run: |
+          set -o pipefail
+          ./deploy.sh production --skip-build 2>&1 | tee "$RUNNER_TEMP/deploy-production-api.log"
 
       - name: Deploy mootmaker-webapp to production
         working-directory: mootmaker-webapp
-        run: ./deploy.sh production --skip-build
+        run: |
+          set -o pipefail
+          ./deploy.sh production --skip-build 2>&1 | tee "$RUNNER_TEMP/deploy-production-webapp.log"
 
       - name: Deploy mootmaker-demo-data to production
         working-directory: mootmaker-demo-data
-        run: ./deploy.sh production --skip-build
+        run: |
+          set -o pipefail
+          ./deploy.sh production --skip-build 2>&1 | tee "$RUNNER_TEMP/deploy-production-demo-data.log"
+
+      - name: Ship deploy-production output to CloudWatch
+        if: always()
+        run: |
+          for c in api webapp demo-data; do
+            mootmaker-release/scripts/ship-to-cloudwatch.sh \
+              "${{ needs.compute-version.outputs.version }}" \
+              deploy-production "mootmaker-$c" production "${{ job.status }}" \
+              "$RUNNER_TEMP/deploy-production-$c.log"
+          done
 
       # Production is NOT seeded here. demo-data already runs there daily on its own EventBridge
       # schedule, and its concerns are idempotent - so a release does not need to force a run, and
@@ -566,7 +631,22 @@ jobs:
         working-directory: mootmaker-release
         env:
           CI: 'true'
-        run: ./smoke/run.sh production production
+        run: |
+          set -o pipefail
+          ./smoke/run.sh production production 2>&1 | tee "$RUNNER_TEMP/smoke-production.log"
+
+      # Playwright's JSON reporter output (Decision 9's `reporter: 'json'` under CI) - test names,
+      # pass/fail, timing, error text. Never trace/video/screenshot: those are binary, run to
+      # hundreds of MB, and PutLogEvents caps one event at 256KB regardless. A failed smoke test
+      # needing a screenshot is an Actions artifact, a separate mechanism entirely.
+      - name: Ship smoke-test-production output to CloudWatch
+        if: always()
+        run: |
+          mootmaker-release/scripts/ship-to-cloudwatch.sh \
+            "${{ needs.compute-version.outputs.version }}" \
+            smoke-test-production mootmaker-release production "${{ job.status }}" \
+            "$RUNNER_TEMP/smoke-production.log"
+
 
       # See the equivalent step in smoke-test-test for why this exists despite Decision 9's
       # artifacts-off stance.
@@ -602,6 +682,11 @@ jobs:
       id-token: write
       contents: read
     steps:
+      # This repo, for scripts/ship-to-cloudwatch.sh. The smoke jobs already check it out for the
+      # suites themselves; the deploy jobs need it only for the shipping script.
+      - uses: actions/checkout@v4
+        with:
+          path: mootmaker-release
       - name: Refuse to roll back with no previous release
         if: needs.compute-version.outputs.previous == ''
         run: |
@@ -652,15 +737,34 @@ jobs:
       # No --skip-build: these rebuild from the tagged source, for the artifact-expiry reason above.
       - name: Redeploy the previous mootmaker-api
         working-directory: mootmaker-api
-        run: ./deploy.sh production
+        run: |
+          set -o pipefail
+          ./deploy.sh production 2>&1 | tee "$RUNNER_TEMP/rollback-api.log"
 
       - name: Redeploy the previous mootmaker-webapp
         working-directory: mootmaker-webapp
-        run: ./deploy.sh production
+        run: |
+          set -o pipefail
+          ./deploy.sh production 2>&1 | tee "$RUNNER_TEMP/rollback-webapp.log"
 
       - name: Redeploy the previous mootmaker-demo-data
         working-directory: mootmaker-demo-data
-        run: ./deploy.sh production
+        run: |
+          set -o pipefail
+          ./deploy.sh production 2>&1 | tee "$RUNNER_TEMP/rollback-demo-data.log"
+
+      # Tagged with the version being ROLLED BACK TO, not the failed one - the question this
+      # answers later is "what happened when we reverted to X", and X is what production ended up
+      # running.
+      - name: Ship rollback output to CloudWatch
+        if: always()
+        run: |
+          for c in api webapp demo-data; do
+            mootmaker-release/scripts/ship-to-cloudwatch.sh \
+              "${{ needs.compute-version.outputs.previous }}" \
+              rollback-production "mootmaker-$c" production "${{ job.status }}" \
+              "$RUNNER_TEMP/rollback-$c.log"
+          done
 
   # Re-runs the read-only suite against the rolled-back production. If THIS fails, production is
   # broken in a way redeploying old code did not fix - which is the masking scenario made visible
@@ -740,7 +844,22 @@ jobs:
         working-directory: mootmaker-release
         env:
           CI: 'true'
-        run: ./smoke/run.sh production production
+        run: |
+          set -o pipefail
+          ./smoke/run.sh production production 2>&1 | tee "$RUNNER_TEMP/smoke-rollback.log"
+
+      # Playwright's JSON reporter output (Decision 9's `reporter: 'json'` under CI) - test names,
+      # pass/fail, timing, error text. Never trace/video/screenshot: those are binary, run to
+      # hundreds of MB, and PutLogEvents caps one event at 256KB regardless. A failed smoke test
+      # needing a screenshot is an Actions artifact, a separate mechanism entirely.
+      - name: Ship smoke-test-rollback output to CloudWatch
+        if: always()
+        run: |
+          mootmaker-release/scripts/ship-to-cloudwatch.sh \
+            "${{ needs.compute-version.outputs.previous }}" \
+            smoke-test-rollback mootmaker-release production "${{ job.status }}" \
+            "$RUNNER_TEMP/smoke-rollback.log"
+
 
   record-outcome:
     name: record-outcome
