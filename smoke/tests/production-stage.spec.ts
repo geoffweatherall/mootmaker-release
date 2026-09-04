@@ -77,15 +77,3 @@ function requireEnv(name: string): string {
   }
   return value
 }
-
-// TEMPORARY - deliberately fails, to satisfy the Definition of done's requirement that the
-// automatic production rollback (Decision 10) be exercised at least once. Placed last so the real
-// read-only checks run first: the point is that a genuine production smoke run failed, not that it
-// never happened.
-//
-// This DOES break production briefly and relies on the pipeline to recover it, which is the whole
-// point - a release process whose recovery path has never run is not a tested release process.
-// Removed immediately after the exercise.
-test('DELIBERATE FAILURE - proves the automatic production rollback runs', async () => {
-  expect(true, 'intentional failure exercising Decision 10').toBe(false)
-})
