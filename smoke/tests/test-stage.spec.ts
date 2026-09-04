@@ -80,6 +80,24 @@ test.describe('test-stage smoke', () => {
     const subject = `Smoke test ${Date.now()}`
     await page.getByLabel('Subject').fill(subject)
 
+    // Pin the meeting to a fixed mid-morning slot rather than accepting the form's default, which
+    // is roughly "now" in the BROWSER's timezone. Room Availability renders only business hours
+    // (08:00-17:00), so a default-timed meeting is invisible there whenever the run happens
+    // outside that window - which is every CI run, since runners are UTC while this project's
+    // developer machine is UTC+12. The meeting was always created correctly; it simply was not
+    // displayed, and the read-back below failed for a timezone reason that looked like a failed
+    // write.
+    //
+    // Set before suggesting a room, so the suggestion is made against the slot actually being
+    // booked rather than the default one.
+    const startTime = page.getByRole('group', { name: 'Start time' })
+    await startTime.getByRole('spinbutton', { name: 'Hours' }).fill('10')
+    await startTime.getByRole('spinbutton', { name: 'Minutes' }).fill('00')
+
+    const endTime = page.getByRole('group', { name: 'End time' })
+    await endTime.getByRole('spinbutton', { name: 'Hours' }).fill('11')
+    await endTime.getByRole('spinbutton', { name: 'Minutes' }).fill('00')
+
     // Suggest a room rather than picking one by name - the available rooms depend on whatever
     // demo-data generated, so asserting on a specific room name would make this suite depend on
     // demo data's content rather than on the app working.
