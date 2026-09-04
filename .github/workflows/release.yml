@@ -400,6 +400,21 @@ jobs:
           CI: 'true'
         run: ./smoke/run.sh test test
 
+      # Decision 9 deliberately turns trace/video/screenshot off to keep the release's log volume
+      # small, and that stands - but with all of them off a smoke failure during a release is
+      # undiagnosable, which was the position after run 33836110034. Playwright still writes a
+      # small error-context.md page snapshot per failure; uploading just that keeps the artifact
+      # tiny (kilobytes, not the hundreds of megabytes a full trace costs) while making a failure
+      # explicable without re-running anything.
+      - name: Upload smoke failure context
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-test-failure-context
+          path: mootmaker-release/test-results/**/error-context.md
+          if-no-files-found: ignore
+          retention-days: 14
+
   # Only reached when test's smoke test passed. Identical in shape to deploy-test, promoting the
   # SAME artifacts again - the third deployment of one build, never a rebuild (Decision 8).
   deploy-production:
@@ -552,6 +567,17 @@ jobs:
         env:
           CI: 'true'
         run: ./smoke/run.sh production production
+
+      # See the equivalent step in smoke-test-test for why this exists despite Decision 9's
+      # artifacts-off stance.
+      - name: Upload smoke failure context
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-production-failure-context
+          path: mootmaker-release/test-results/**/error-context.md
+          if-no-files-found: ignore
+          retention-days: 14
 
   # Decision 10. test passing while production fails implies something environment-specific to
   # production - a data shape, a config difference, a race - rather than a code defect test should
