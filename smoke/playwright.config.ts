@@ -21,6 +21,20 @@ export default defineConfig({
   // A release is sequential and a failure should stop it, not produce a long parallel report.
   fullyParallel: false,
   workers: 1,
+  // Playwright's defaults (30s per test, 5s per expect) are both too short here, for two separate
+  // reasons - matching mootmaker-webapp/acceptance/playwright.config.ts, which learned this first.
+  //
+  // expect: a Java Lambda cold start is around 6 seconds, so a 5s assertion timeout fails against a
+  // freshly deployed environment while the request is still in flight. That is exactly how the
+  // meeting read-back failed in CI while passing locally against an already-warm test environment.
+  //
+  // timeout: waitForVerificationCode long-polls SQS for up to 60 seconds waiting for a real email.
+  // Inside a 30-second test timeout that could never have completed on a slow delivery - it passed
+  // locally only because delivery happened to be fast.
+  timeout: 120_000,
+  expect: {
+    timeout: 15_000,
+  },
   // Decision 9's output config, deliberately at the low end. The JSON reporter's test names,
   // pass/fail, timing and error text are what make Decision 11's CloudWatch shipping readable at a
   // few KB per run. trace/video/screenshot are a different axis entirely and can balloon to
