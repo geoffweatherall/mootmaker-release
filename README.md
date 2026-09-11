@@ -70,10 +70,17 @@ release, and anything merged before it is — including work nobody had this rel
 Check for open PRs that were expected to land first.
 
 **4. Choose the bump knowing a failed attempt consumes the version.** `compute-version` reads the
-latest release *including* failed prereleases, so a version number is never reused. The trap is on
-**retry**: re-running a failed `major` attempt as `major` again bumps from the burned version, so
-`v2.0.0` failing and being retried as `major` produces `v3.0.0`, not `v2.0.0`. Retry with `patch`
-unless a whole major really is intended.
+latest release *including* failed prereleases, so a version number is never reused. A failed attempt
+does not release its number back.
+
+**Retrying a failed release always uses `patch`**, whatever bump the failed attempt asked for. The
+requested bump has already been applied and spent: a failed `major` moved the line from `v1.0.2` to
+`v2.0.0`, so the major boundary exists in the version history and the retry only needs to step past
+the burned number. `patch` lands it on `v2.0.1` — still inside the `2.x` that the major bump created,
+which is what a consumer reading the version cares about.
+
+Repeating the original bump instead double-counts it: a second `major` computes from `v2.0.0` and
+produces `v3.0.0`, skipping `2.x` entirely for a release whose only fault was failing once.
 
 ## Why a separate repo
 
