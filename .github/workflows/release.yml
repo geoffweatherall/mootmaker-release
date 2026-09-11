@@ -559,9 +559,31 @@ jobs:
               "$RUNNER_TEMP/deploy-production-$c.log"
           done
 
-      # Production is NOT seeded here. demo-data already runs there daily on its own EventBridge
-      # schedule, and its concerns are idempotent - so a release does not need to force a run, and
-      # forcing one would be a write to production that the release does not need to make.
+      # NB-3. Seeds production, mirroring NB-2 for test. This used to say production was
+      # deliberately NOT seeded, because demo-data runs there daily and its concerns are
+      # idempotent. That reasoning holds for a normal release and fails for a rebuild: after a
+      # destroy there is nothing for idempotence to be idempotent OVER, so v2.0.0 left the public
+      # demo with zero rooms until the 06:00 UTC schedule fired hours later - and the production
+      # smoke passed over it regardless. See mootmaker-release#42.
+      #
+      # Seeding is not "a write the release does not need to make": demo content IS the product
+      # for a demo system, so a release that cannot produce it has not succeeded.
+      #
+      # Placement matters. This sits inside deploy-production, BEFORE smoke-test-production, and
+      # rollback-production fires only on `needs.smoke-test-production.result == 'failure'`. So a
+      # seeding failure stops the release with smoke skipped, and does NOT roll production back -
+      # reverting a good deploy because demo content failed to generate is exactly mootmaker#46's
+      # "rollback fires where it cannot help".
+      #
+      # --cli-read-timeout clears the function's own 900s ceiling, as in NB-2. The CLI's 60s
+      # default would report a false failure on a full seed while the Lambda ran on regardless.
+      - name: Seed production with demo data
+        run: |
+          aws lambda invoke \
+            --function-name production-mootmaker-demo-data \
+            --cli-read-timeout 900 \
+            --payload '{}' \
+            /dev/stdout
 
   # Strictly read-only (Decision 9). Signs in as the published demo user, navigates, confirms reads
   # display. No signup, no deletion, no password reset, no meeting creation - production takes no
