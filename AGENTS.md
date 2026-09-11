@@ -16,8 +16,9 @@ for the actual design.
   the current picture.
 - **Running `release.yml` deploys to `test` and then `production`.** It pushes real `vX.Y.Z` tags to
   all four repositories, deploys both standing environments, and creates a GitHub Release. A failed
-  attempt still consumes its version number — tags are never reused. Do not dispatch it casually to
-  "see what happens", and read "Before starting a release" in the README first.
+  attempt still consumes its version number — tags are never reused, and a **retry always uses
+  `patch`**, never a repeat of the original bump, which would double-count it. Do not dispatch it
+  casually to "see what happens", and read "Before starting a release" in the README first.
 - **Scan the open issues before dispatching a release.** Across `mootmaker`, the three components
   and this repo — not just the repo whose change prompted the release. Nothing in `release.yml`
   gates on whether now is a good moment, so this is the check that catches a manual prerequisite
