@@ -10,15 +10,19 @@ for the actual design.
 
 ## Working here
 
-- **`release.yml` exists and is partially built (2026-09-03).** The design's four blocking open
-  questions are resolved and build-out is under way under the standing authorization in the design's
-  "Execution authorization for this build-out" section. Version computation, the three component
-  builds, tagging and the release record are built; the `test`/`production` promotion stages and
-  rollback are not, because they depend on the smoke suites and on `test` being stood up. Check the
-  README's stage table before assuming any given stage works.
-- **Running `release.yml` today tags and publishes, but deploys nothing.** It will push real `vX.Y.Z`
-  tags to all four repositories and create a GitHub Release. Those tags are not reused if a later
-  attempt fails, by design — but they are real, so do not dispatch it casually to "see what happens".
+- **`release.yml` is complete and in regular use.** Every stage exists and runs: version
+  computation, the three component builds, tagging, promotion to `test` and then `production` with a
+  smoke test either side, automatic rollback, and the release record. The README's stage table is
+  the current picture.
+- **Running `release.yml` deploys to `test` and then `production`.** It pushes real `vX.Y.Z` tags to
+  all four repositories, deploys both standing environments, and creates a GitHub Release. A failed
+  attempt still consumes its version number — tags are never reused. Do not dispatch it casually to
+  "see what happens", and read "Before starting a release" in the README first.
+- **Scan the open issues before dispatching a release.** Across `mootmaker`, the three components
+  and this repo — not just the repo whose change prompted the release. Nothing in `release.yml`
+  gates on whether now is a good moment, so this is the check that catches a manual prerequisite
+  the pipeline has no step for, or a known-broken path the run is about to exercise for the first
+  time. The README's "Before starting a release" gives the command and the three shapes to look for.
 - **The PAT is the one long-lived credential in this design.** `RELEASE_TAG_PAT` is `contents: write`
   on exactly four repos and is used in exactly one place, the `tag` job. Its value must never be
   echoed, logged, or pass through a session.
