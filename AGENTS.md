@@ -18,6 +18,11 @@ for the actual design.
   all four repositories, deploys both standing environments, and creates a GitHub Release. A failed
   attempt still consumes its version number — tags are never reused. Do not dispatch it casually to
   "see what happens", and read "Before starting a release" in the README first.
+- **Scan the open issues before dispatching a release.** Across `mootmaker`, the three components
+  and this repo — not just the repo whose change prompted the release. Nothing in `release.yml`
+  gates on whether now is a good moment, so this is the check that catches a manual prerequisite
+  the pipeline has no step for, or a known-broken path the run is about to exercise for the first
+  time. The README's "Before starting a release" gives the command and the three shapes to look for.
 - **The PAT is the one long-lived credential in this design.** `RELEASE_TAG_PAT` is `contents: write`
   on exactly four repos and is used in exactly one place, the `tag` job. Its value must never be
   echoed, logged, or pass through a session.
