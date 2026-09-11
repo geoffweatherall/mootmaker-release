@@ -39,16 +39,24 @@ test.describe('production smoke (read-only)', () => {
     await expect(page.getByText('Sign out')).toBeVisible()
   })
 
-  test('meeting data reads back from the database and displays', async ({ page }) => {
+  test('the calendar opens for the signed-in user', async ({ page }) => {
     await signIn(page)
 
-    // Demo data is always deployed to production and refreshed daily, so production genuinely has
-    // meetings to read. An empty page here means either the read path is broken or demo-data has
-    // stopped running - both worth failing a release for.
-    //
     // exact: true - a meeting whose subject happens to contain "Calendar" would otherwise match
     // the nav link (a real trap this project has hit before).
     await page.getByRole('link', { name: 'Calendar', exact: true }).click()
+
+    // The heading, not the meetings. This page is filtered to ONE person - it renders only
+    // meetings the signed-in user organises or attends - and demo-data guarantees a meeting on
+    // every weekday, not that the published demo user is on any of them. Asserting a meeting is
+    // visible would therefore fail for a data reason while looking like a broken read, and would
+    // trigger an automatic production rollback that cannot fix it (mootmaker#46).
+    //
+    // What this DOES prove is worth more than it looks: the route resolves only once the
+    // `custom:personId` claim has resolved, because the page skips its query without one and the
+    // nav item sits on a spinner. So this assertion is what would catch mootmaker-api#39 - the
+    // Cognito attribute write that never converges - in production.
+    await expect(page.getByRole('heading', { name: 'Calendar' })).toBeVisible()
   })
 
   test('room availability reads back from the database and displays', async ({ page }) => {
