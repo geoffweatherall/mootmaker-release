@@ -139,10 +139,19 @@ jobs:
   # performs THREE simultaneous mootmaker-api deployments, each publishing SnapStart versions,
   # each of which executes an init to take its snapshot.
   #
-  # This account's Lambda concurrency quota is 10 and reservations are not possible, and that is
-  # how the v0.0.2 release failed: all three builds died within seconds of each other on a
+  # This is how the v0.0.2 release failed: all three builds died within seconds of each other on a
   # published version stuck in 'Failed'/'FunctionError', using code and Terraform byte-identical
   # to what had passed standalone three times. See mootmaker#41.
+  #
+  # The suspected cause was this account's Lambda concurrency quota - 10 at the time, with
+  # reservations impossible. That ceiling is gone: the quota is 1,000 since 2026-09-07
+  # (mootmaker#72), and mootmaker#75 tracks reverting this serialisation.
+  #
+  # Still sequenced deliberately, and raising the quota is not on its own a reason to change that.
+  # #41 records the exhaustion explanation as "the strongest hypothesis with its uncertainty
+  # stated" rather than a proven cause - FunctionError says init failed, not that it was throttled,
+  # and the underlying StateReason was never captured. So going parallel again is an experiment
+  # whose failure mode is a broken release, not a tidy-up, and it should be run as one.
   #
   # The cost is roughly three times the Stage 1 wall clock. A release is a deliberate act that
   # already takes tens of minutes, so reliability wins over speed here.
