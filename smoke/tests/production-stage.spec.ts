@@ -46,17 +46,26 @@ test.describe('production smoke (read-only)', () => {
     // the nav link (a real trap this project has hit before).
     await page.getByRole('link', { name: 'Calendar', exact: true }).click()
 
-    // The heading, not the meetings. This page is filtered to ONE person - it renders only
-    // meetings the signed-in user organises or attends - and demo-data guarantees a meeting on
-    // every weekday, not that the published demo user is on any of them. Asserting a meeting is
-    // visible would therefore fail for a data reason while looking like a broken read, and would
-    // trigger an automatic production rollback that cannot fix it (mootmaker#46).
-    //
-    // What this DOES prove is worth more than it looks: the route resolves only once the
-    // `custom:personId` claim has resolved, because the page skips its query without one and the
-    // nav item sits on a spinner. So this assertion is what would catch mootmaker-api#39 - the
-    // Cognito attribute write that never converges - in production.
+    // The heading first. The route resolves only once the `custom:personId` claim has, because
+    // the page skips its query without one and the nav item sits on a spinner - so this alone is
+    // what would catch mootmaker-api#39, the Cognito attribute write that never converges.
     await expect(page.getByRole('heading', { name: 'Calendar' })).toBeVisible()
+
+    // Then an actual meeting. This was deliberately absent until now: the page filters to ONE
+    // person, and demo-data guaranteed a meeting on every weekday without guaranteeing the demo
+    // user was on any of them, so asserting this would have failed for a data reason while
+    // looking like a broken read. mootmaker-demo-data#29 makes it deterministic - the demo
+    // Person is in that environment's guaranteed-person-ids list.
+    //
+    // Against the GRID, not "today". The calendar renders Mon-Fri only, so a release on a
+    // Saturday or Sunday shows the week just gone; an assertion naming today would fail every
+    // weekend. Every weekday in the six-week grid sits inside demo-data's seeding window on any
+    // day of the week, so "some meeting is rendered" is true whenever the guarantee has run.
+    //
+    // This is the assertion the smoke suite existed for and did not have: it exercises
+    // custom:personId -> workspace(dates:) -> day items -> per-person filtering, the whole v2.0.0
+    // stack, where the heading alone proves only that a page rendered.
+    await expect(page.locator('a[href^="/meetings/"]').first()).toBeVisible()
   })
 
   test('room availability reads back from the database and displays', async ({ page }) => {
