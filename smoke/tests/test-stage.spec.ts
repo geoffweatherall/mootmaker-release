@@ -68,6 +68,10 @@ test.describe('test-stage smoke', () => {
     await expect(page.getByRole('heading', { name: 'Room Availability' })).toBeVisible()
 
     await page.getByRole('link', { name: 'Calendar', exact: true }).click()
+    // See production-stage.spec.ts for why this asserts the heading rather than a meeting: the
+    // calendar is filtered to one person, and this suite's account was created seconds ago, so it
+    // is guaranteed to have no meetings at all yet.
+    await expect(page.getByRole('heading', { name: 'Calendar' })).toBeVisible()
   })
 
   test('a meeting can be created', async ({ page }) => {
