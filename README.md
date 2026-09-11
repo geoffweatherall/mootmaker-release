@@ -26,6 +26,55 @@ Running `release.yml` today builds, acceptance-tests and tags all three componen
 `test`, smoke-tests that, promotes the same artifacts to `production`, smoke-tests again, and rolls
 `production` back automatically if that fails.
 
+## Before starting a release
+
+Releasing is explicitly initiated, so the judgement about *whether to release now* sits with
+whoever dispatches it rather than with any gate in the pipeline. Four checks, in order:
+
+**1. Scan the open issues first — across every repo the release touches**, not just the one whose
+change prompted it:
+
+```sh
+for r in mootmaker mootmaker-api mootmaker-webapp mootmaker-demo-data mootmaker-release; do
+  echo "=== $r ==="
+  gh issue list --repo geoffweatherall/$r --state open --limit 40 \
+    --jq '.[] | "#\(.number)\t\(.title)"' --json number,title
+done
+```
+
+Most open issues are future work and say nothing about today's release. The ones that do fall into
+three shapes, and the point of reading the list is to separate them from the rest:
+
+- **A prerequisite someone still has to perform by hand.** The pipeline cannot tell that a design
+  expected a manual step before it ran. `mootmaker#67` was exactly this — a teardown of `test` and
+  `production` that `release.yml` has no step for, because `terraform apply` only ever creates or
+  updates.
+- **A known-broken path that this release will exercise for the first time.** `mootmaker-api#39`
+  (Terraform never converges `custom:*` Cognito attributes) is harmless on the update path and
+  becomes a live question the moment an environment is created from nothing.
+- **An observation that changes how much the safety net is worth.** `mootmaker#46` records that
+  automatic rollback is most likely to fire in precisely the cases it cannot repair —
+  environment-shaped failures rather than code defects, which Stage 1 has already caught. Worth
+  knowing *before* deciding to release unattended, not while reading a red run.
+
+An issue that merely describes a bug the release does not touch is not a reason to stop.
+
+**2. Re-check the facts a design recorded as facts-about-a-day.** Designs here deliberately date
+their environment observations ("Verified 2026-09-07: `production`'s pool contains exactly two
+users ... **That is a fact about that day, not a standing property**"). Re-run the check; do not
+inherit the claim.
+
+**3. Confirm the component `main` branches are what you mean to ship.** `compute-version` pins each
+component's `main` SHA at the start of the run, so anything merged after that point is not in this
+release, and anything merged before it is — including work nobody had this release in mind for.
+Check for open PRs that were expected to land first.
+
+**4. Choose the bump knowing a failed attempt consumes the version.** `compute-version` reads the
+latest release *including* failed prereleases, so a version number is never reused. The trap is on
+**retry**: re-running a failed `major` attempt as `major` again bumps from the burned version, so
+`v2.0.0` failing and being retried as `major` produces `v3.0.0`, not `v2.0.0`. Retry with `patch`
+unless a whole major really is intended.
+
 ## Why a separate repo
 
 Not the hub (`mootmaker` — deliberately holds no deployed code, and firing real deploys from a docs
