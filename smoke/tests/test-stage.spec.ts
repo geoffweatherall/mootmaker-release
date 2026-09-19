@@ -116,8 +116,10 @@ test.describe('test-stage smoke', () => {
     await page.getByRole('button', { name: 'Save' }).click()
 
     // Read the write back. A save that appears to succeed but does not persist is exactly the
-    // failure this layer exists to catch.
-    await expect(page.getByText(subject)).toBeVisible()
+    // failure this layer exists to catch. exact: true, since the calendar's "Next: <subject> at
+    // <time>" summary line also contains subject as a substring and would otherwise make this
+    // locator ambiguous.
+    await expect(page.getByText(subject, { exact: true })).toBeVisible()
   })
 
   test('the password can be reset with a real emailed code', async ({ page }) => {
