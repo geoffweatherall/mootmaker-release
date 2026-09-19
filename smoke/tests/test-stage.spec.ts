@@ -111,15 +111,26 @@ test.describe('test-stage smoke', () => {
     // the form validates with Room still empty, shows "Please select a room.", and the suggestion
     // then fills the field a moment later - so the page ends up looking correct while the save
     // never happened.
-    await expect(page.getByRole('combobox', { name: 'Room' })).not.toHaveValue('')
+    const roomCombo = page.getByRole('combobox', { name: 'Room' })
+    await expect(roomCombo).not.toHaveValue('')
+    // The field's value is "<room name> (capacity N)" (see AddMeetingPage.tsx) - strip the
+    // suffix to get the plain name the Room Availability card below is titled with.
+    const roomName = (await roomCombo.inputValue()).replace(/\s*\(capacity \d+\)$/, '')
 
     await page.getByRole('button', { name: 'Save' }).click()
 
     // Read the write back. A save that appears to succeed but does not persist is exactly the
-    // failure this layer exists to catch. exact: true, since the calendar's "Next: <subject> at
-    // <time>" summary line also contains subject as a substring and would otherwise make this
-    // locator ambiguous.
-    await expect(page.getByText(subject, { exact: true })).toBeVisible()
+    // failure this layer exists to catch. The meeting only renders once its room's card is
+    // expanded - see RoomAvailabilityPage.tsx's "See <day>'s meetings" Collapse toggle - and even
+    // then plain getByText(subject) is ambiguous: the card's own status sublabel can independently
+    // repeat the bare subject (see roomAvailabilityLogic.ts), so only the meeting row itself,
+    // which alone has role 'link', is asserted on. Mirrors mootmaker-webapp's own
+    // acceptance/tests/add-meeting.spec.ts, which needed the identical fix for the same redesign.
+    const card = page
+      .getByText(roomName, { exact: true })
+      .locator('xpath=ancestor::*[contains(concat(" ", normalize-space(@class), " "), " MuiPaper-root ")][1]')
+    await card.getByRole('button', { name: /'s meetings/ }).click()
+    await expect(card.getByRole('link', { name: subject, exact: false })).toBeVisible()
   })
 
   test('the password can be reset with a real emailed code', async ({ page }) => {
