@@ -123,14 +123,15 @@ test.describe('test-stage smoke', () => {
     // failure this layer exists to catch. The meeting only renders once its room's card is
     // expanded - see RoomAvailabilityPage.tsx's "See <day>'s meetings" Collapse toggle - and even
     // then plain getByText(subject) is ambiguous: the card's own status sublabel can independently
-    // repeat the bare subject (see roomAvailabilityLogic.ts), so only the meeting row itself,
-    // which alone has role 'link', is asserted on. Mirrors mootmaker-webapp's own
-    // acceptance/tests/add-meeting.spec.ts, which needed the identical fix for the same redesign.
+    // repeat the bare subject (see roomAvailabilityLogic.ts), so only the meeting row itself is
+    // asserted on. It opens the shared detail sheet/panel in place now, not a navigation - role
+    // 'button', not 'link' - see mootmaker-webapp's designs/meeting-detail-consolidation.md, which
+    // needed the identical fix throughout its own acceptance suite for the same change.
     const card = page
       .getByText(roomName, { exact: true })
       .locator('xpath=ancestor::*[contains(concat(" ", normalize-space(@class), " "), " MuiPaper-root ")][1]')
     await card.getByRole('button', { name: /'s meetings/ }).click()
-    await expect(card.getByRole('link', { name: subject, exact: false })).toBeVisible()
+    await expect(card.getByRole('button', { name: subject, exact: false })).toBeVisible()
   })
 
   test('the password can be reset with a real emailed code', async ({ page }) => {

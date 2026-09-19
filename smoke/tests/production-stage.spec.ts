@@ -65,7 +65,18 @@ test.describe('production smoke (read-only)', () => {
     // This is the assertion the smoke suite existed for and did not have: it exercises
     // custom:personId -> workspace(dates:) -> day items -> per-person filtering, the whole v2.0.0
     // stack, where the heading alone proves only that a page rendered.
-    await expect(page.locator('a[href^="/meetings/"]').first()).toBeVisible()
+    //
+    // A meeting row is a button, not a link, that opens the shared detail sheet/panel in place -
+    // see mootmaker-webapp's designs/meeting-detail-consolidation.md - so it can no longer be found
+    // by an `a[href^="/meetings/"]` CSS selector (nothing on this page has that href any more).
+    // Matched instead by a time pattern in its accessible name, since this suite has no way to
+    // know a real subject in advance (real production data) and no other control on this page has
+    // a time-shaped name. Clicking it is a read, not a write - fine for this strictly read-only
+    // suite - and proves the same per-person data actually renders, one level deeper than the
+    // heading alone would.
+    const meetingRow = page.getByRole('button', { name: /\d{2}:\d{2}/ }).first()
+    await meetingRow.click()
+    await expect(page.getByRole('heading', { level: 2 })).toBeVisible()
   })
 
   test('room availability reads back from the database and displays', async ({ page }) => {
