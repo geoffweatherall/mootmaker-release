@@ -52,7 +52,7 @@ jobs:
   # and tags the same commit even if something merges mid-release.
   compute-version:
     name: compute-version
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.next.outputs.version }}
       # The tag rollback targets. Empty when this is the first release, which is the one case
@@ -184,7 +184,7 @@ jobs:
   tag:
     name: tag
     needs: [compute-version, build-api, build-webapp, build-demo-data]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       # record-outcome branches on this rather than on later jobs' success. Set the moment the tags
       # land, so "were tags pushed?" is answerable even if a later stage fails outright.
@@ -236,7 +236,7 @@ jobs:
   deploy-test:
     name: deploy-test
     needs: [compute-version, tag]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
       id-token: write
@@ -359,7 +359,7 @@ jobs:
   smoke-test-test:
     name: smoke-test-test
     needs: [compute-version, deploy-test]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       id-token: write
@@ -471,7 +471,7 @@ jobs:
   deploy-production:
     name: deploy-production
     needs: [compute-version, smoke-test-test]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
       id-token: write
@@ -591,7 +591,7 @@ jobs:
   smoke-test-production:
     name: smoke-test-production
     needs: [compute-version, deploy-production]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       id-token: write
@@ -707,7 +707,7 @@ jobs:
     name: rollback-production
     needs: [compute-version, deploy-production, smoke-test-production]
     if: failure() && needs.smoke-test-production.result == 'failure'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
       id-token: write
@@ -804,7 +804,7 @@ jobs:
     name: smoke-test-rollback
     needs: [compute-version, rollback-production]
     if: always() && needs.rollback-production.result == 'success'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       id-token: write
@@ -898,7 +898,7 @@ jobs:
     # if: always() is the whole mechanism. A normal job stops when something upstream fails; this
     # one must run regardless, or a failed release leaves tags on GitHub with nothing saying so.
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
       # Decision 5's third case opens an ISSUE when no tag was ever pushed, and that needs
