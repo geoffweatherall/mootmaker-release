@@ -244,28 +244,28 @@ jobs:
     steps:
       # This repo, for scripts/ship-to-cloudwatch.sh. The smoke jobs already check it out for the
       # suites themselves; the deploy jobs need it only for the shipping script.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           path: mootmaker-release
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           repository: geoffweatherall/mootmaker-api
           ref: ${{ needs.compute-version.outputs.api-sha }}
           path: mootmaker-api
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           repository: geoffweatherall/mootmaker-webapp
           ref: ${{ needs.compute-version.outputs.webapp-sha }}
           path: mootmaker-webapp
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           repository: geoffweatherall/mootmaker-demo-data
           ref: ${{ needs.compute-version.outputs.demo-data-sha }}
           path: mootmaker-demo-data
 
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v4
         with:
           terraform_wrapper: false
 
@@ -277,24 +277,24 @@ jobs:
           node-version: '24'
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v5
         with:
           role-to-assume: arn:aws:iam::431071856068:role/mootmaker-release-github-actions-deploy
           aws-region: us-east-1
 
       # Downloaded to exactly where each component's Terraform already looks, so deploy.sh
       # --skip-build finds them without any path plumbing.
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v6
         with:
           name: mootmaker-api-${{ needs.compute-version.outputs.version }}
           path: mootmaker-api/impl/target
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v6
         with:
           name: mootmaker-demo-data-${{ needs.compute-version.outputs.version }}
           path: mootmaker-demo-data/impl/target
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v6
         with:
           name: mootmaker-webapp-${{ needs.compute-version.outputs.version }}
           path: mootmaker-webapp/webapp/dist
@@ -365,28 +365,28 @@ jobs:
       id-token: write
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           path: mootmaker-release
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           repository: geoffweatherall/mootmaker-api
           ref: ${{ needs.compute-version.outputs.api-sha }}
           path: mootmaker-api
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           repository: geoffweatherall/mootmaker-webapp
           ref: ${{ needs.compute-version.outputs.webapp-sha }}
           path: mootmaker-webapp
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           repository: geoffweatherall/mootmaker-email-testing
           path: mootmaker-email-testing
 
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v4
         with:
           terraform_wrapper: false
 
@@ -403,7 +403,7 @@ jobs:
       # found". The deploy jobs had this step; the smoke jobs were written from their shape and
       # dropped it.
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v5
         with:
           role-to-assume: arn:aws:iam::431071856068:role/mootmaker-release-github-actions-deploy
           aws-region: us-east-1
@@ -459,7 +459,7 @@ jobs:
       # explicable without re-running anything.
       - name: Upload smoke failure context
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: smoke-test-failure-context
           path: mootmaker-release/test-results/**/error-context.md
@@ -479,28 +479,28 @@ jobs:
     steps:
       # This repo, for scripts/ship-to-cloudwatch.sh. The smoke jobs already check it out for the
       # suites themselves; the deploy jobs need it only for the shipping script.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           path: mootmaker-release
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           repository: geoffweatherall/mootmaker-api
           ref: ${{ needs.compute-version.outputs.api-sha }}
           path: mootmaker-api
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           repository: geoffweatherall/mootmaker-webapp
           ref: ${{ needs.compute-version.outputs.webapp-sha }}
           path: mootmaker-webapp
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           repository: geoffweatherall/mootmaker-demo-data
           ref: ${{ needs.compute-version.outputs.demo-data-sha }}
           path: mootmaker-demo-data
 
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v4
         with:
           terraform_wrapper: false
 
@@ -509,22 +509,22 @@ jobs:
           node-version: '24'
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v5
         with:
           role-to-assume: arn:aws:iam::431071856068:role/mootmaker-release-github-actions-deploy
           aws-region: us-east-1
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v6
         with:
           name: mootmaker-api-${{ needs.compute-version.outputs.version }}
           path: mootmaker-api/impl/target
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v6
         with:
           name: mootmaker-demo-data-${{ needs.compute-version.outputs.version }}
           path: mootmaker-demo-data/impl/target
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v6
         with:
           name: mootmaker-webapp-${{ needs.compute-version.outputs.version }}
           path: mootmaker-webapp/webapp/dist
@@ -597,28 +597,28 @@ jobs:
       id-token: write
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           path: mootmaker-release
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           repository: geoffweatherall/mootmaker-api
           ref: ${{ needs.compute-version.outputs.api-sha }}
           path: mootmaker-api
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           repository: geoffweatherall/mootmaker-webapp
           ref: ${{ needs.compute-version.outputs.webapp-sha }}
           path: mootmaker-webapp
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           repository: geoffweatherall/mootmaker-email-testing
           path: mootmaker-email-testing
 
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v4
         with:
           terraform_wrapper: false
 
@@ -635,7 +635,7 @@ jobs:
       # found". The deploy jobs had this step; the smoke jobs were written from their shape and
       # dropped it.
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v5
         with:
           role-to-assume: arn:aws:iam::431071856068:role/mootmaker-release-github-actions-deploy
           aws-region: us-east-1
@@ -683,7 +683,7 @@ jobs:
       # artifacts-off stance.
       - name: Upload smoke failure context
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: smoke-production-failure-context
           path: mootmaker-release/test-results/**/error-context.md
@@ -715,7 +715,7 @@ jobs:
     steps:
       # This repo, for scripts/ship-to-cloudwatch.sh. The smoke jobs already check it out for the
       # suites themselves; the deploy jobs need it only for the shipping script.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           path: mootmaker-release
       - name: Refuse to roll back with no previous release
@@ -727,29 +727,29 @@ jobs:
 
       # The previous release's tag exists in every component repo, pushed by that release's own
       # tag job - so one tag name resolves the whole set.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           repository: geoffweatherall/mootmaker-api
           ref: ${{ needs.compute-version.outputs.previous }}
           path: mootmaker-api
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           repository: geoffweatherall/mootmaker-webapp
           ref: ${{ needs.compute-version.outputs.previous }}
           path: mootmaker-webapp
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           repository: geoffweatherall/mootmaker-demo-data
           ref: ${{ needs.compute-version.outputs.previous }}
           path: mootmaker-demo-data
 
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v4
         with:
           terraform_wrapper: false
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '25'
@@ -760,7 +760,7 @@ jobs:
           node-version: '24'
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v5
         with:
           role-to-assume: arn:aws:iam::431071856068:role/mootmaker-release-github-actions-deploy
           aws-region: us-east-1
@@ -810,28 +810,28 @@ jobs:
       id-token: write
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           path: mootmaker-release
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           repository: geoffweatherall/mootmaker-api
           ref: ${{ needs.compute-version.outputs.previous }}
           path: mootmaker-api
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           repository: geoffweatherall/mootmaker-webapp
           ref: ${{ needs.compute-version.outputs.previous }}
           path: mootmaker-webapp
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           repository: geoffweatherall/mootmaker-email-testing
           path: mootmaker-email-testing
 
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v4
         with:
           terraform_wrapper: false
 
@@ -848,7 +848,7 @@ jobs:
       # found". The deploy jobs had this step; the smoke jobs were written from their shape and
       # dropped it.
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v5
         with:
           role-to-assume: arn:aws:iam::431071856068:role/mootmaker-release-github-actions-deploy
           aws-region: us-east-1
