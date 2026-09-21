@@ -284,17 +284,17 @@ jobs:
 
       # Downloaded to exactly where each component's Terraform already looks, so deploy.sh
       # --skip-build finds them without any path plumbing.
-      - uses: actions/download-artifact@v6
+      - uses: actions/download-artifact@v7
         with:
           name: mootmaker-api-${{ needs.compute-version.outputs.version }}
           path: mootmaker-api/impl/target
 
-      - uses: actions/download-artifact@v6
+      - uses: actions/download-artifact@v7
         with:
           name: mootmaker-demo-data-${{ needs.compute-version.outputs.version }}
           path: mootmaker-demo-data/impl/target
 
-      - uses: actions/download-artifact@v6
+      - uses: actions/download-artifact@v7
         with:
           name: mootmaker-webapp-${{ needs.compute-version.outputs.version }}
           path: mootmaker-webapp/webapp/dist
@@ -514,17 +514,17 @@ jobs:
           role-to-assume: arn:aws:iam::431071856068:role/mootmaker-release-github-actions-deploy
           aws-region: us-east-1
 
-      - uses: actions/download-artifact@v6
+      - uses: actions/download-artifact@v7
         with:
           name: mootmaker-api-${{ needs.compute-version.outputs.version }}
           path: mootmaker-api/impl/target
 
-      - uses: actions/download-artifact@v6
+      - uses: actions/download-artifact@v7
         with:
           name: mootmaker-demo-data-${{ needs.compute-version.outputs.version }}
           path: mootmaker-demo-data/impl/target
 
-      - uses: actions/download-artifact@v6
+      - uses: actions/download-artifact@v7
         with:
           name: mootmaker-webapp-${{ needs.compute-version.outputs.version }}
           path: mootmaker-webapp/webapp/dist
