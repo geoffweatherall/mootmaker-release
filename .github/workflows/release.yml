@@ -1,4 +1,4 @@
-# The mootmaker release pipeline. See mootmaker/designs/ci-cd-pipeline.md.
+# The mootmaker release pipeline. See mootmaker/designs/archive/ci-cd-pipeline.md.
 #
 # Nothing here runs automatically. A merge to main in any component repo changes nothing until
 # someone deliberately starts a release (Decision 1). The shape is:

@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test'
 
 /**
- * The production-stage smoke test. See ../../../mootmaker/designs/ci-cd-pipeline.md Decision 9.
+ * The production-stage smoke test. See ../../../mootmaker/designs/archive/ci-cd-pipeline.md Decision 9.
  *
  * STRICTLY READ-ONLY, NO EXCEPTIONS. Signs in as the published demo user, navigates, and confirms
  * data reads back and displays. Deliberately absent, and none of these may be added later without

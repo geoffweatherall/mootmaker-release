@@ -1,7 +1,7 @@
 import { defineConfig, devices } from '@playwright/test'
 
 /**
- * Smoke tests for the release pipeline. See ../mootmaker/designs/ci-cd-pipeline.md Decision 9.
+ * Smoke tests for the release pipeline. See ../mootmaker/designs/archive/ci-cd-pipeline.md Decision 9.
  *
  * These are deliberately NOT a second acceptance suite. They are the five minutes of clicking a
  * human tester would actually do, and the two projects below are deliberately asymmetric:

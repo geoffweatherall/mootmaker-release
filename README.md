@@ -12,7 +12,7 @@ through `test`, then `production`, with a smoke test at each stage.
 
 Releasing is a deliberate, explicitly-initiated act (`gh workflow run` — a human or an AI), never a
 side effect of merging to `main`. See
-[mootmaker/designs/ci-cd-pipeline.md](https://github.com/geoffweatherall/mootmaker/blob/main/designs/ci-cd-pipeline.md)
+[mootmaker/designs/archive/ci-cd-pipeline.md](https://github.com/geoffweatherall/mootmaker/blob/main/designs/archive/ci-cd-pipeline.md)
 for the full design and reasoning.
 
 **Status: built and in regular use (updated 2026-09-05).** The design itself remains `Drafting`
