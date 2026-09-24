@@ -5,7 +5,7 @@ Hosts the release pipeline that ships `mootmaker-api`, `mootmaker-webapp`, and
 on merge to `main`.
 
 **Start by reading [README.md](README.md)**, then
-[`../mootmaker/designs/ci-cd-pipeline.md`](https://github.com/geoffweatherall/mootmaker/blob/main/designs/ci-cd-pipeline.md)
+[`../mootmaker/designs/archive/ci-cd-pipeline.md`](https://github.com/geoffweatherall/mootmaker/blob/main/designs/archive/ci-cd-pipeline.md)
 for the actual design.
 
 ## Working here

@@ -115,5 +115,5 @@ process to tell you.
 
 Do not weaken the test to make the count go up. That trades away the only mechanism that produced
 any of this information. See the design's
-["What the gate exposed"](https://github.com/geoffweatherall/mootmaker/blob/main/designs/ci-cd-pipeline.md)
+["What the gate exposed"](https://github.com/geoffweatherall/mootmaker/blob/main/designs/archive/ci-cd-pipeline.md)
 for what that instinct would have cost — seven real defects, every one first seen as a flake.

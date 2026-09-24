@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Runs a smoke suite against an ALREADY-DEPLOYED environment. See
-# ../mootmaker/designs/ci-cd-pipeline.md Decision 9.
+# ../mootmaker/designs/archive/ci-cd-pipeline.md Decision 9.
 #
 # This script never creates or tears down an environment - the release pipeline deploys, then calls
 # this. That is the opposite of mootmaker-webapp's e2e/acceptance run.sh, which may create its own

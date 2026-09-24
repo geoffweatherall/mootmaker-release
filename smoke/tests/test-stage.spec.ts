@@ -9,7 +9,7 @@ import { waitForVerificationCode } from '../../../mootmaker-webapp/support/email
 import { freshTestAccount } from '../../../mootmaker-webapp/support/testAccount'
 
 /**
- * The test-stage smoke test. See ../../../mootmaker/designs/ci-cd-pipeline.md Decision 9.
+ * The test-stage smoke test. See ../../../mootmaker/designs/archive/ci-cd-pipeline.md Decision 9.
  *
  * Roughly the five minutes of clicking a human tester would actually do against a fresh
  * deployment: sign up for real, sign in, create a meeting, look at existing demo data, reset the
