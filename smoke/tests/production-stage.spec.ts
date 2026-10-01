@@ -18,6 +18,11 @@ import { expect, test } from '@playwright/test'
  * (test-stage.spec.ts), which is what actually closes the "does a write work" gap.
  *
  * If a future change needs production to prove a write, that is a design change, not a test change.
+
+ *
+ * The one test suite allowed to rely on demo data (mootmaker-release#64, decided 2026-10-01). Every
+ * other test creates what it relies on, but this one cannot write. In production the demo user's
+ * seeded data is the product a visitor sees, so reading it back is testing that product.
  */
 
 const demoEmail = requireEnv('DEMO_USER_EMAIL')

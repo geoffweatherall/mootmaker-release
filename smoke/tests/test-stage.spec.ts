@@ -1,19 +1,22 @@
 import { expect, test } from '@playwright/test'
-// Imported from the mootmaker-webapp sibling checkout rather than copied. This is the project's
-// established convention for cross-repo reuse (mootmaker-webapp's own run.sh resolves
-// ../mootmaker-api, demo-data's verify/ does the same), and duplicating it would be worse than the
-// coupling: email.ts carries hard-won detail about standard-queue ordering and leaving other
+// Imported from the mootmaker-webapp sibling checkout rather than copied. Duplicating it would be
+// worse than the coupling: email.ts carries hard-won detail about standard-queue ordering and leaving other
 // tests' messages untouched, so a divergent copy would show up as smoke tests reading each other's
 // verification codes. See mootmaker-release#5 for the extraction question.
 import { waitForVerificationCode } from '../../../mootmaker-webapp/support/email'
 import { freshTestAccount } from '../../../mootmaker-webapp/support/testAccount'
+import { createRoom, deleteRoom } from '../support/adminApi'
 
 /**
  * The test-stage smoke test. See ../../../mootmaker/designs/archive/ci-cd-pipeline.md Decision 9.
  *
  * Roughly the five minutes of clicking a human tester would actually do against a fresh
- * deployment: sign up for real, sign in, create a meeting, look at existing demo data, reset the
- * password, delete the account again. Explicitly NOT a re-run of the acceptance suite - if this
+ * deployment: sign up for real, sign in, check the published demo login, create a meeting and read
+ * it back, reset the password, delete the account again.
+ *
+ * It creates everything it relies on - including the room it books, over the API, since a standard
+ * user cannot create one - and relies on nothing demo-data generated (mootmaker-release#64). The
+ * demo user is used only to check the demo login itself works. Explicitly NOT a re-run of the acceptance suite - if this
  * grows into one, it has stopped being a smoke test.
  *
  * This suite MUTATES data, and that is the point: it is what closes the "does a write actually
@@ -27,6 +30,9 @@ import { freshTestAccount } from '../../../mootmaker-webapp/support/testAccount'
  */
 
 const account = freshTestAccount()
+
+/** Set by the meeting test and removed by the last test, so nothing is left behind. */
+let smokeRoomId: string | undefined
 
 test.describe.configure({ mode: 'serial' })
 
@@ -55,26 +61,37 @@ test.describe('test-stage smoke', () => {
     await signIn(page, account.email, account.password)
   })
 
-  test('existing demo data reads back and displays', async ({ page }) => {
+  test('the published demo login on the home page signs in', async ({ page }) => {
+    // The home page offers every signed-out visitor these credentials, pre-filled. Checked here so
+    // a broken demo login is caught in test, before production's smoke test would be the first to
+    // notice. Signs in with what the page shows, not with the values this process was given.
+    await page.goto('/')
+    await expect(page.getByLabel('Email')).toHaveValue(requireEnv('DEMO_USER_EMAIL'))
+    await expect(page.getByLabel('Password')).toHaveValue(requireEnv('DEMO_USER_PASSWORD'))
+    await page.getByRole('button', { name: 'Sign in' }).click()
+    await expect(page.getByText('Sign out')).toBeVisible()
+  })
+
+  test('the signed-in pages render for the new account', async ({ page }) => {
     await signIn(page, account.email, account.password)
 
-    // The test environment is seeded by demo-data, so there is real data to read. This is the read
-    // half of the check - the write half is the meeting created below.
-    //
-    // Room Availability and Calendar, NOT Rooms/People: those are admin-only sections of
-    // /settings, and the account this suite just signed up is a standard user. Asserting on them
-    // would fail for an authorization reason while looking like a broken read.
+    // Room Availability and Calendar, NOT Rooms/People: those are admin-only, and the account this
+    // suite just signed up is a standard user. Asserting on them would fail for an authorization
+    // reason while looking like a broken read. The calendar is filtered to this account, which was
+    // created seconds ago, so the heading is the assertion - the read-back of real data is the
+    // meeting created below.
     await page.getByRole('link', { name: 'Room Availability' }).click()
     await expect(page.getByRole('heading', { name: 'Room Availability' })).toBeVisible()
 
     await page.getByRole('link', { name: 'Calendar', exact: true }).click()
-    // See production-stage.spec.ts for why this asserts the heading rather than a meeting: the
-    // calendar is filtered to one person, and this suite's account was created seconds ago, so it
-    // is guaranteed to have no meetings at all yet.
     await expect(page.getByRole('heading', { name: 'Calendar' })).toBeVisible()
   })
 
-  test('a meeting can be created', async ({ page }) => {
+  test('a meeting can be created', async ({ page, request }) => {
+    // The suite's own room, so there is always one free to book whether or not demo-data has run.
+    // Capacity 2, the minimum: the smallest room that fits is what "Suggest a room" ranks first.
+    smokeRoomId = await createRoom(request, `Smoke test room ${Date.now()}`, 2)
+
     await signIn(page, account.email, account.password)
 
     // A link, not a button, and there is more than one entry point to the form - hence .first().
@@ -102,9 +119,9 @@ test.describe('test-stage smoke', () => {
     await endTime.getByRole('spinbutton', { name: 'Hours' }).fill('11')
     await endTime.getByRole('spinbutton', { name: 'Minutes' }).fill('00')
 
-    // Suggest a room rather than picking one by name - the available rooms depend on whatever
-    // demo-data generated, so asserting on a specific room name would make this suite depend on
-    // demo data's content rather than on the app working.
+    // Suggest a room rather than picking one by name: it exercises the suggestion, and the suite's
+    // own room above guarantees there is a free one. Which room is suggested does not matter - the
+    // read-back below follows whichever it was.
     await page.getByRole('button', { name: 'Suggest a room' }).click()
 
     // Wait for the suggestion to actually land before saving. Clicking Save immediately races it:
@@ -174,7 +191,19 @@ test.describe('test-stage smoke', () => {
     // accumulating a dead account per release, which would eventually make People meaningless.
     await expect(page.getByText('Sign out')).toHaveCount(0)
   })
+
+  test("the suite's room is removed", async ({ request }) => {
+    // Deleting the account cancelled the meeting it organised, so the room has nothing booked and
+    // can go. Without this, every release would leave a room behind in test.
+    if (smokeRoomId) await deleteRoom(request, smokeRoomId)
+  })
 })
+
+function requireEnv(name: string): string {
+  const value = process.env[name]
+  if (!value) throw new Error(`${name} is not set - see smoke/run.sh.`)
+  return value
+}
 
 async function signIn(page: import('@playwright/test').Page, email: string, password: string): Promise<void> {
   await page.goto('/')
