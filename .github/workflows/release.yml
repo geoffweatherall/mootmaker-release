@@ -371,24 +371,9 @@ jobs:
 
       - uses: actions/checkout@v5
         with:
-          repository: geoffweatherall/mootmaker-api
-          ref: ${{ needs.compute-version.outputs.api-sha }}
-          path: mootmaker-api
-
-      - uses: actions/checkout@v5
-        with:
           repository: geoffweatherall/mootmaker-webapp
           ref: ${{ needs.compute-version.outputs.webapp-sha }}
           path: mootmaker-webapp
-
-      - uses: actions/checkout@v5
-        with:
-          repository: geoffweatherall/mootmaker-email-testing
-          path: mootmaker-email-testing
-
-      - uses: hashicorp/setup-terraform@v4
-        with:
-          terraform_wrapper: false
 
       - uses: actions/setup-node@v5
         with:
@@ -396,9 +381,8 @@ jobs:
           cache: npm
           cache-dependency-path: mootmaker-release/package-lock.json
 
-      # smoke/run.sh reads Terraform outputs (the site URL, and the shared SQS queue URL) and
-      # sources mootmaker-api's authenticate.sh, and the mutating suite polls SQS for real
-      # verification emails - all of which need AWS credentials. The job declared id-token: write
+      # smoke/run.sh reads its configuration from SSM Parameter Store (mootmaker-api#94) and the
+      # mutating suite polls SQS for real verification emails - both of which need AWS credentials. The job declared id-token: write
       # but never exchanged it, so run.sh failed immediately with "No valid credential sources
       # found". The deploy jobs had this step; the smoke jobs were written from their shape and
       # dropped it.
@@ -603,24 +587,9 @@ jobs:
 
       - uses: actions/checkout@v5
         with:
-          repository: geoffweatherall/mootmaker-api
-          ref: ${{ needs.compute-version.outputs.api-sha }}
-          path: mootmaker-api
-
-      - uses: actions/checkout@v5
-        with:
           repository: geoffweatherall/mootmaker-webapp
           ref: ${{ needs.compute-version.outputs.webapp-sha }}
           path: mootmaker-webapp
-
-      - uses: actions/checkout@v5
-        with:
-          repository: geoffweatherall/mootmaker-email-testing
-          path: mootmaker-email-testing
-
-      - uses: hashicorp/setup-terraform@v4
-        with:
-          terraform_wrapper: false
 
       - uses: actions/setup-node@v5
         with:
@@ -628,9 +597,8 @@ jobs:
           cache: npm
           cache-dependency-path: mootmaker-release/package-lock.json
 
-      # smoke/run.sh reads Terraform outputs (the site URL, and the shared SQS queue URL) and
-      # sources mootmaker-api's authenticate.sh, and the mutating suite polls SQS for real
-      # verification emails - all of which need AWS credentials. The job declared id-token: write
+      # smoke/run.sh reads its configuration from SSM Parameter Store (mootmaker-api#94) and the
+      # mutating suite polls SQS for real verification emails - both of which need AWS credentials. The job declared id-token: write
       # but never exchanged it, so run.sh failed immediately with "No valid credential sources
       # found". The deploy jobs had this step; the smoke jobs were written from their shape and
       # dropped it.
@@ -816,24 +784,9 @@ jobs:
 
       - uses: actions/checkout@v5
         with:
-          repository: geoffweatherall/mootmaker-api
-          ref: ${{ needs.compute-version.outputs.previous }}
-          path: mootmaker-api
-
-      - uses: actions/checkout@v5
-        with:
           repository: geoffweatherall/mootmaker-webapp
           ref: ${{ needs.compute-version.outputs.previous }}
           path: mootmaker-webapp
-
-      - uses: actions/checkout@v5
-        with:
-          repository: geoffweatherall/mootmaker-email-testing
-          path: mootmaker-email-testing
-
-      - uses: hashicorp/setup-terraform@v4
-        with:
-          terraform_wrapper: false
 
       - uses: actions/setup-node@v5
         with:
@@ -841,9 +794,8 @@ jobs:
           cache: npm
           cache-dependency-path: mootmaker-release/package-lock.json
 
-      # smoke/run.sh reads Terraform outputs (the site URL, and the shared SQS queue URL) and
-      # sources mootmaker-api's authenticate.sh, and the mutating suite polls SQS for real
-      # verification emails - all of which need AWS credentials. The job declared id-token: write
+      # smoke/run.sh reads its configuration from SSM Parameter Store (mootmaker-api#94) and the
+      # mutating suite polls SQS for real verification emails - both of which need AWS credentials. The job declared id-token: write
       # but never exchanged it, so run.sh failed immediately with "No valid credential sources
       # found". The deploy jobs had this step; the smoke jobs were written from their shape and
       # dropped it.

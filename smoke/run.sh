@@ -18,9 +18,8 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="${script_dir}/.."
-api_dir="${repo_root}/../mootmaker-api"
+# Still needed: the smoke suites import mootmaker-webapp's shared email and account helpers.
 webapp_dir="${repo_root}/../mootmaker-webapp"
-email_testing_dir="${repo_root}/../mootmaker-email-testing"
 
 stage="${1:-}"
 environment="${2:-}"
@@ -41,35 +40,45 @@ if [[ "${stage}" == "test" && "${environment}" == "production" ]]; then
   exit 1
 fi
 
-for dir in "${api_dir}" "${webapp_dir}" "${email_testing_dir}"; do
-  if [[ ! -d "${dir}" ]]; then
-    echo "Expected to find ${dir} as a sibling checkout." >&2
+if [[ ! -d "${webapp_dir}" ]]; then
+  echo "Expected to find ${webapp_dir} as a sibling checkout." >&2
+  exit 1
+fi
+
+# Everything the suites need is looked up in SSM Parameter Store, where each component publishes
+# what it owns (mootmaker-api#94). No other component's repository or Terraform state is read, so
+# this needs only AWS credentials that can read /mootmaker/<environment>/* and
+# /mootmaker/email-testing/*.
+ssm_value() {
+  local value
+  if ! value="$(aws ssm get-parameter --name "$1" --with-decryption --query Parameter.Value --output text 2>&1)"; then
+    echo "Could not read SSM parameter $1 - has '${environment}' been deployed? ${value}" >&2
     exit 1
   fi
-done
+  printf '%s' "${value}"
+}
 
-# Populates GRAPHQL_API_URL, COGNITO_USER_POOL_ID, COGNITO_WEBAPP_CLIENT_ID, DEMO_USER_EMAIL,
-# DEMO_USER_PASSWORD and friends from this environment's deployed Terraform outputs.
-# shellcheck source=/dev/null
-source "${api_dir}/authenticate.sh" "${environment}"
-
-# The site URL comes from mootmaker-webapp's state rather than being constructed from the
-# environment name, so a change to the domain layout cannot silently point the smoke test at a URL
-# that does not exist.
-webapp_tf_data_dir="${webapp_dir}/deploy/terraform/.terraform-${environment}"
-TF_DATA_DIR="${webapp_tf_data_dir}" terraform -chdir="${webapp_dir}/deploy/terraform" init \
-  -backend-config=backend.hcl \
-  -backend-config="key=${environment}/mootmaker-webapp/terraform.tfstate" \
-  -input=false >/dev/null
-WEBAPP_URL="$(TF_DATA_DIR="${webapp_tf_data_dir}" terraform -chdir="${webapp_dir}/deploy/terraform" output -raw site_url)"
-export WEBAPP_URL
-
+DEMO_USER_EMAIL="$(ssm_value "/mootmaker/${environment}/api/demo-user/email")"
+DEMO_USER_PASSWORD="$(ssm_value "/mootmaker/${environment}/api/demo-user/password")"
+# Published by mootmaker-webapp's own Terraform rather than built from the environment name, so a
+# change to the domain layout cannot silently point the smoke test at a URL that does not exist.
+WEBAPP_URL="$(ssm_value "/mootmaker/${environment}/webapp/site-url")"
 # The email pipeline is persistent shared infrastructure owned by mootmaker-email-testing - one
 # queue for the whole project, not one per environment. Only the mutating suite reads it, but
 # populating it unconditionally keeps this script's two paths identical up to the final command.
-terraform -chdir="${email_testing_dir}/deploy/terraform" init -backend-config=backend.hcl -input=false >/dev/null
-SQS_QUEUE_URL="$(terraform -chdir="${email_testing_dir}/deploy/terraform" output -raw sqs_queue_url)"
-export SQS_QUEUE_URL
+SQS_QUEUE_URL="$(ssm_value /mootmaker/email-testing/sqs-queue-url)"
+export DEMO_USER_EMAIL DEMO_USER_PASSWORD WEBAPP_URL SQS_QUEUE_URL
+
+# The mutating suite creates (and removes) its own room over the API, because the account it signs
+# up is a standard user and cannot. The read-only production suite never needs these.
+if [[ "${stage}" == "test" ]]; then
+  GRAPHQL_API_URL="$(ssm_value "/mootmaker/${environment}/api/graphql-url")"
+  M2M_TOKEN_URL="$(ssm_value "/mootmaker/${environment}/api/m2m-client/token-url")"
+  M2M_CLIENT_ID="$(ssm_value "/mootmaker/${environment}/api/m2m-client/client-id")"
+  M2M_CLIENT_SECRET="$(ssm_value "/mootmaker/${environment}/api/m2m-client/client-secret")"
+  M2M_SCOPE="$(ssm_value "/mootmaker/${environment}/api/m2m-client/scope")"
+  export GRAPHQL_API_URL M2M_TOKEN_URL M2M_CLIENT_ID M2M_CLIENT_SECRET M2M_SCOPE
+fi
 
 echo "Smoke-testing '${environment}' (${stage} stage) at ${WEBAPP_URL}..." >&2
 
