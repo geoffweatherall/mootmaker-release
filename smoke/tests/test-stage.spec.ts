@@ -136,6 +136,14 @@ test.describe('test-stage smoke', () => {
 
     await page.getByRole('button', { name: 'Save' }).click()
 
+    // Save returns to the page the form was opened from - Home here (mootmaker-webapp#146) - so
+    // confirm that, then go to today's Room Availability the way a user would, from Home's own
+    // "Room availability today" action.
+    await expect(page.getByText('Meeting was successfully scheduled.')).toBeVisible()
+    await expect(page).toHaveURL(/\/$/)
+    await page.getByRole('button', { name: 'Room availability today' }).click()
+    await expect(page).toHaveURL(/\/rooms\/.+\/availability/)
+
     // Read the write back. A save that appears to succeed but does not persist is exactly the
     // failure this layer exists to catch. The meeting only renders once its room's card is
     // expanded - see RoomAvailabilityPage.tsx's "See <day>'s meetings" Collapse toggle - and even
