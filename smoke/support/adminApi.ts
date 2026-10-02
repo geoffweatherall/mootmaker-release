@@ -17,7 +17,21 @@ function requireEnv(name: string): string {
   return value
 }
 
-async function accessToken(request: APIRequestContext): Promise<string> {
+let cachedToken: Promise<string> | undefined
+
+/**
+ * Fetched once per run, not per call. Cognito bills every machine-to-machine token request, with no
+ * free tier, and a token stays valid for hours - far longer than this suite takes.
+ */
+function accessToken(request: APIRequestContext): Promise<string> {
+  cachedToken ??= fetchAccessToken(request).catch((error: unknown) => {
+    cachedToken = undefined
+    throw error
+  })
+  return cachedToken
+}
+
+async function fetchAccessToken(request: APIRequestContext): Promise<string> {
   const response = await request.post(requireEnv('M2M_TOKEN_URL'), {
     form: {
       grant_type: 'client_credentials',
