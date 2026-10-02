@@ -900,16 +900,31 @@ jobs:
 
             # A rollback is never left implicit in the record. OQ-2 accepted that an automatic
             # revert can mask a data-shape problem old code does not fix - the mitigation is that
-            # it is always stated here, so the masking is never silent.
-            if [ "${ROLLBACK}" != "skipped" ]; then
+            # it is always stated here, so the masking is never silent. Only a rollback that ran
+            # is reported as one: cancelling a run marks every job "cancelled", which must not read
+            # as a production rollback that never happened (mootmaker-release#36).
+            if [ "${ROLLBACK}" = "success" ]; then
               echo "> **Production was rolled back to \`${PREVIOUS}\`.**"
               echo ">"
               echo "> The production smoke test failed on this version, so the previous release was"
-              echo "> redeployed automatically (Decision 10). Rollback: \`${ROLLBACK}\`."
+              echo "> redeployed automatically (Decision 10)."
               echo "> Smoke test after rollback: \`${SMOKE_ROLLBACK}\`."
               echo ">"
               echo "> A rollback restores known-good code. It does NOT prove the underlying problem"
               echo "> is fixed - if the cause was environment- or data-shaped, it is still there."
+              echo
+            elif [ "${ROLLBACK}" = "failure" ]; then
+              echo "> **The automatic rollback to \`${PREVIOUS}\` failed.**"
+              echo ">"
+              echo "> The production smoke test failed on this version and the rollback did not"
+              echo "> complete, so production may be running this version or a partial deploy."
+              echo "> Check it."
+              echo
+            elif [ "${ROLLBACK}" = "cancelled" ] && [ "${SMOKE_PROD}" = "failure" ]; then
+              echo "> **The automatic rollback was cancelled before it finished.**"
+              echo ">"
+              echo "> The production smoke test failed on this version, so production is probably"
+              echo "> still running it. Check it."
               echo
             fi
             echo "| Component | Commit |"
