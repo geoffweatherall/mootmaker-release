@@ -133,31 +133,25 @@ jobs:
       version: ${{ needs.compute-version.outputs.version }}
       ref: ${{ needs.compute-version.outputs.api-sha }}
 
-  # Sequenced after build-api, NOT parallel with it. Decision 7 gives each component its own fresh
-  # ephemeral environment, but mootmaker-webapp and mootmaker-demo-data each deploy mootmaker-api
-  # too - it is a dependency of the environment they test against. So running all three at once
-  # performs THREE simultaneous mootmaker-api deployments, each publishing SnapStart versions,
-  # each of which executes an init to take its snapshot.
+  # Parallel with build-api and build-demo-data (mootmaker#75, mootmaker-release#11). Decision 7
+  # gives each component its own fresh ephemeral environment, and mootmaker-webapp and
+  # mootmaker-demo-data each deploy mootmaker-api into theirs - so this runs THREE simultaneous
+  # mootmaker-api deployments, each publishing SnapStart versions.
   #
-  # This is how the v0.0.2 release failed: all three builds died within seconds of each other on a
-  # published version stuck in 'Failed'/'FunctionError', using code and Terraform byte-identical
-  # to what had passed standalone three times. See mootmaker#41.
+  # That is how the v0.0.2 release failed: all three builds died within seconds of each other on a
+  # published version stuck in 'Failed'/'FunctionError' (mootmaker#41), and the builds were
+  # serialised in response. The suspected cause was the account's Lambda concurrency quota - 10
+  # then, 1,000 since 2026-09-07 (mootmaker#72) - but that was never proven: FunctionError says
+  # init failed, not that it was throttled.
   #
-  # The suspected cause was this account's Lambda concurrency quota - 10 at the time, with
-  # reservations impossible. That ceiling is gone: the quota is 1,000 since 2026-09-07
-  # (mootmaker#72), and mootmaker#75 tracks reverting this serialisation.
-  #
-  # Still sequenced deliberately, and raising the quota is not on its own a reason to change that.
-  # #41 records the exhaustion explanation as "the strongest hypothesis with its uncertainty
-  # stated" rather than a proven cause - FunctionError says init failed, not that it was throttled,
-  # and the underlying StateReason was never captured. So going parallel again is an experiment
-  # whose failure mode is a broken release, not a tidy-up, and it should be run as one.
-  #
-  # The cost is roughly three times the Stage 1 wall clock. A release is a deliberate act that
-  # already takes tens of minutes, so reliability wins over speed here.
+  # So this is the experiment that settles #41. If a release fails with all three builds dying
+  # together on a Failed/FunctionError version, capture the function's StateReason
+  # (aws lambda get-function-configuration --qualifier <version>) before tearing anything down,
+  # record it on #41, and restore the old chain: build-webapp needs build-api, build-demo-data needs
+  # build-webapp.
   build-webapp:
     name: build-webapp
-    needs: [compute-version, build-api]
+    needs: compute-version
     permissions:
       id-token: write
       contents: read
@@ -166,10 +160,10 @@ jobs:
       version: ${{ needs.compute-version.outputs.version }}
       ref: ${{ needs.compute-version.outputs.webapp-sha }}
 
-  # Sequenced after build-webapp for the same reason - see the comment above build-webapp.
+  # Parallel too - see the comment above build-webapp.
   build-demo-data:
     name: build-demo-data
-    needs: [compute-version, build-webapp]
+    needs: compute-version
     permissions:
       id-token: write
       contents: read
