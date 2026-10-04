@@ -772,9 +772,22 @@ jobs:
       id-token: write
       contents: read
     steps:
+      # Pipeline plumbing (ship-to-cloudwatch.sh) comes from the caller's ref, like every other job.
       - uses: actions/checkout@v5
         with:
           path: mootmaker-release
+
+      # The SMOKE SUITE comes from the previous release's tag, matching the application it is about
+      # to test (mootmaker-release#23). Run from main, a release that also advanced the suite - a new
+      # assertion, a check for a feature only the new version has - would fail the rolled-back app
+      # for behaviour it never had, and the release record would report that rollback did not
+      # recover production when it did. The previous tag's suite is the one that was proven against
+      # that application. mootmaker-release is tagged by every release, so the ref always exists
+      # here: rollback-production has already refused to run without a previous release.
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.compute-version.outputs.previous }}
+          path: mootmaker-release-previous
 
       - uses: actions/checkout@v5
         with:
@@ -786,7 +799,7 @@ jobs:
         with:
           node-version: '24'
           cache: npm
-          cache-dependency-path: mootmaker-release/package-lock.json
+          cache-dependency-path: mootmaker-release-previous/package-lock.json
 
       # smoke/run.sh reads its configuration from SSM Parameter Store (mootmaker-api#94) and the
       # mutating suite polls SQS for real verification emails - both of which need AWS credentials. The job declared id-token: write
@@ -810,15 +823,15 @@ jobs:
         run: npm ci --omit=dev
 
       - name: Install smoke-test dependencies
-        working-directory: mootmaker-release
+        working-directory: mootmaker-release-previous
         run: npm ci
 
       - name: Install Playwright browser
-        working-directory: mootmaker-release
+        working-directory: mootmaker-release-previous
         run: npx playwright install --with-deps chrome
 
       - name: Smoke test the rolled-back production
-        working-directory: mootmaker-release
+        working-directory: mootmaker-release-previous
         env:
           CI: 'true'
         run: |
