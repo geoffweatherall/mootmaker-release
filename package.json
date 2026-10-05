@@ -9,14 +9,12 @@
     "smoke:production": "playwright test -c smoke/playwright.config.ts --project=production-stage",
     "typecheck": "tsc -p tsconfig.json"
   },
-  "dependencies": {
-    "@aws-sdk/client-sqs": "^3.940.0",
-    "mailparser": "^3.7.4"
-  },
   "devDependencies": {
     "@playwright/test": "^1.61.1",
-    "@types/mailparser": "^3.4.6",
     "@types/node": "^24.13.2",
     "typescript": "~6.0.2"
+  },
+  "dependencies": {
+    "mootmaker-email-testing": "github:geoffweatherall/mootmaker-email-testing#v1.0.0"
   }
 }

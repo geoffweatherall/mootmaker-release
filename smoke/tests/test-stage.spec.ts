@@ -1,10 +1,9 @@
 import { expect, test } from '@playwright/test'
-// Imported from the mootmaker-webapp sibling checkout rather than copied. Duplicating it would be
-// worse than the coupling: email.ts carries hard-won detail about standard-queue ordering and leaving other
-// tests' messages untouched, so a divergent copy would show up as smoke tests reading each other's
-// verification codes. See mootmaker-release#5 for the extraction question.
-import { waitForVerificationCode } from '../../../mootmaker-webapp/support/email'
-import { freshTestAccount } from '../../../mootmaker-webapp/support/testAccount'
+// Shared with mootmaker-webapp's suites through the mootmaker-email-testing package rather than
+// copied: the client carries hard-won detail about standard-queue ordering and leaving other tests'
+// messages untouched, so a divergent copy would show up as smoke tests reading each other's
+// verification codes (mootmaker-release#5).
+import { freshTestAccount, waitForVerificationCode } from 'mootmaker-email-testing'
 import { createRoom, deleteRoom } from '../support/adminApi'
 
 /**

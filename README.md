@@ -109,7 +109,10 @@ tags are pushed **only after** all three builds pass, so a tag always names a pr
 whether later jobs succeeded, which is what prevents tags existing with nothing recording them.
 
 The cross-component smoke-test suites live in `smoke/` (Playwright, with its own `run.sh` and
-config), and `scripts/` holds the CloudWatch log shipping that gives each release durable detail
+config). They read real verification emails through the `mootmaker-email-testing` package, the
+same client mootmaker-webapp's suites use, pinned to a tag in `package.json` — see
+[mootmaker-email-testing](https://github.com/geoffweatherall/mootmaker-email-testing#using-it-from-tests).
+`scripts/` holds the CloudWatch log shipping that gives each release durable detail
 behind its GitHub Release summary.
 
 [docs/release-confidence.md](docs/release-confidence.md) covers a question this pipeline raised and
