@@ -18,8 +18,6 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="${script_dir}/.."
-# Still needed: the smoke suites import mootmaker-webapp's shared email and account helpers.
-webapp_dir="${repo_root}/../mootmaker-webapp"
 
 stage="${1:-}"
 environment="${2:-}"
@@ -37,11 +35,6 @@ fi
 # touch production, so this refuses the combination rather than trusting the caller.
 if [[ "${stage}" == "test" && "${environment}" == "production" ]]; then
   echo "Refusing to run the mutating 'test' suite against production - production is read-only for smoke tests (Decision 9)." >&2
-  exit 1
-fi
-
-if [[ ! -d "${webapp_dir}" ]]; then
-  echo "Expected to find ${webapp_dir} as a sibling checkout." >&2
   exit 1
 fi
 
