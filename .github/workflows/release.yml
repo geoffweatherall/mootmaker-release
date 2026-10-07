@@ -68,6 +68,9 @@ jobs:
       webapp-sha: ${{ steps.shas.outputs.webapp }}
       demo-data-sha: ${{ steps.shas.outputs.demo_data }}
       android-sha: ${{ steps.shas.outputs.android }}
+      # 'true' once the release keystore is a secret here. Until then every Android stage is
+      # skipped and the release ships the other three components exactly as before.
+      android: ${{ steps.android.outputs.enabled }}
     steps:
       - name: Compute the next version
         id: next
@@ -124,6 +127,18 @@ jobs:
             echo "${repo}: ${sha}"
             echo "${repo//mootmaker-/}=${sha}" | tr '-' '_' >> "$GITHUB_OUTPUT"
           done
+
+      # The keystore is Geoff's to create and add (android-app.md, "The release signing key is
+      # forever"). Without it the Android stages are skipped, not failed, so the backend still ships.
+      - name: Is the Android app included?
+        id: android
+        env:
+          HAS_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+        run: |
+          echo "enabled=${HAS_KEYSTORE}" >> "$GITHUB_OUTPUT"
+          if [[ "${HAS_KEYSTORE}" != "true" ]]; then
+            echo "::notice title=Android skipped::No ANDROID_KEYSTORE_BASE64 secret, so this release builds and publishes no APK"
+          fi
 
   # Stage 1: build, unit test and acceptance test every component against its own fresh ephemeral
   # environment, in parallel. Each uploads the artifact that later stages promote unchanged - it is
@@ -187,6 +202,7 @@ jobs:
   build-android:
     name: build-android
     needs: compute-version
+    if: needs.compute-version.outputs.android == 'true'
     permissions:
       id-token: write
       contents: read
@@ -207,6 +223,12 @@ jobs:
   tag:
     name: tag
     needs: [compute-version, build-api, build-webapp, build-demo-data, build-android]
+    # A skipped build-android would otherwise skip this job too. Only "skipped because there is no
+    # keystore" counts as fine; any other non-success still stops the release here.
+    if: >-
+      !cancelled() && needs.build-api.result == 'success' && needs.build-webapp.result == 'success' &&
+      needs.build-demo-data.result == 'success' &&
+      (needs.build-android.result == 'success' || needs.compute-version.outputs.android != 'true')
     runs-on: ubuntu-24.04
     outputs:
       # record-outcome branches on this rather than on later jobs' success. Set the moment the tags
@@ -226,6 +248,7 @@ jobs:
           WEBAPP_SHA: ${{ needs.compute-version.outputs.webapp-sha }}
           DEMO_DATA_SHA: ${{ needs.compute-version.outputs.demo-data-sha }}
           ANDROID_SHA: ${{ needs.compute-version.outputs.android-sha }}
+          ANDROID: ${{ needs.compute-version.outputs.android }}
         run: |
           set -euo pipefail
           tag="v${VERSION}"
@@ -242,7 +265,9 @@ jobs:
           tag_repo mootmaker-api "${API_SHA}"
           tag_repo mootmaker-webapp "${WEBAPP_SHA}"
           tag_repo mootmaker-demo-data "${DEMO_DATA_SHA}"
-          tag_repo mootmaker-android "${ANDROID_SHA}"
+          if [[ "${ANDROID}" == "true" ]]; then
+            tag_repo mootmaker-android "${ANDROID_SHA}"
+          fi
           # This repo has no deployable artifact either, but it is where the Release is published,
           # so keeping its tag and that Release together is simpler than splitting them.
           tag_repo mootmaker-release "${GITHUB_SHA}"
@@ -476,6 +501,10 @@ jobs:
   deploy-production:
     name: deploy-production
     needs: [compute-version, smoke-test-test, smoke-android-test]
+    # As at tag: a smoke-android-test skipped for want of a keystore must not hold production back.
+    if: >-
+      !cancelled() && needs.smoke-test-test.result == 'success' &&
+      (needs.smoke-android-test.result == 'success' || needs.compute-version.outputs.android != 'true')
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
@@ -914,6 +943,7 @@ jobs:
           WEBAPP_SHA: ${{ needs.compute-version.outputs.webapp-sha }}
           DEMO_DATA_SHA: ${{ needs.compute-version.outputs.demo-data-sha }}
           ANDROID_SHA: ${{ needs.compute-version.outputs.android-sha }}
+          ANDROID: ${{ needs.compute-version.outputs.android }}
           BUILD_API: ${{ needs.build-api.result }}
           BUILD_WEBAPP: ${{ needs.build-webapp.result }}
           BUILD_DEMO_DATA: ${{ needs.build-demo-data.result }}
@@ -993,20 +1023,22 @@ jobs:
           # and an issue is the honest artifact.
           if [ "${TAG_PUSHED}" = "true" ] && [ "${BUILD_API}" = "success" ] \
              && [ "${BUILD_WEBAPP}" = "success" ] && [ "${BUILD_DEMO_DATA}" = "success" ] \
-             && [ "${BUILD_ANDROID}" = "success" ] \
              && [ "${DEPLOY_TEST}" = "success" ] && [ "${SMOKE_TEST}" = "success" ] \
-             && [ "${SMOKE_ANDROID_TEST}" = "success" ] \
              && [ "${DEPLOY_PROD}" = "success" ] && [ "${SMOKE_PROD}" = "success" ] \
-             && [ "${SMOKE_ANDROID_PROD}" = "success" ]; then
-            # The Android app is a preview until it reaches parity with the webapp (android-app.md).
-            apk="apk/mootmaker-android-${VERSION}.apk"
-            {
-              echo
-              echo "**Android app (preview):** \`mootmaker-android-${VERSION}.apk\`, SHA-256 in the \`.sha256\` file beside it."
-            } >> body.md
+             && { [ "${ANDROID}" != "true" ] || { [ "${BUILD_ANDROID}" = "success" ] \
+                  && [ "${SMOKE_ANDROID_TEST}" = "success" ] && [ "${SMOKE_ANDROID_PROD}" = "success" ]; }; }; then
+            apk_files=()
+            if [ "${ANDROID}" = "true" ]; then
+              # The Android app is a preview until it reaches parity with the webapp (android-app.md).
+              apk="apk/mootmaker-android-${VERSION}.apk"
+              {
+                echo
+                echo "**Android app (preview):** \`mootmaker-android-${VERSION}.apk\`, SHA-256 in the \`.sha256\` file beside it."
+              } >> body.md
+              apk_files=("${apk}#mootmaker-android-${VERSION}.apk (preview)" "${apk}.sha256")
+            fi
             gh release create "v${VERSION}" --repo "$GITHUB_REPOSITORY" \
-              --title "v${VERSION}" --notes-file body.md \
-              "${apk}#mootmaker-android-${VERSION}.apk (preview)" "${apk}.sha256"
+              --title "v${VERSION}" --notes-file body.md "${apk_files[@]}"
             echo "Published release v${VERSION}"
           elif [ "${TAG_PUSHED}" = "true" ]; then
             gh release create "v${VERSION}" --repo "$GITHUB_REPOSITORY" \

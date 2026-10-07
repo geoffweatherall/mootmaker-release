@@ -111,8 +111,8 @@ input (`patch`/`minor`/`major`). Built so far:
 four repository secrets here (`ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`,
 `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`; `build-android` passes them explicitly, because a called
 workflow sees only its caller's secrets), and `mootmaker-android` added to `RELEASE_TAG_PAT`'s
-repositories. Without the keystore, `build-android` fails before building rather than signing with
-any other key. The keystore is generated and backed up by Geoff and never enters a cloud session.
+repositories. Until the `ANDROID_KEYSTORE_BASE64` secret exists, every Android stage is skipped
+(a notice says so) and the release ships the other three components exactly as before. The keystore is generated and backed up by Geoff and never enters a cloud session.
 An Android smoke failure on `production` does not roll production back (the web smoke test decides
 that); it stops the APK being published and marks the release FAILED.
 
