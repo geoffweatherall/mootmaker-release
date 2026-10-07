@@ -491,9 +491,10 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-  # The Android release APK from build-android, on an emulator, pointed at test: the read-only demo
-  # sign-in, then the home agenda must render (mootmaker-android's smoke/demo-sign-in.yaml, run by
-  # Maestro). Production waits for it, like the web smoke test.
+  # The Android release APK from build-android, on an emulator, pointed at test: sign up with a real
+  # emailed code, use the app, then delete the account (mootmaker-android's
+  # smoke/sign-up-lifecycle.yaml, run by Maestro; the shape of test-stage.spec.ts). Production waits
+  # for it, like the web smoke test.
   # artifact-name is built from the version here, NOT read from build-android's output. The release
   # key's alias is stored as a secret and is "mootmaker", so GitHub drops any job output containing
   # that text ("Skip output ... since it may contain secret"): the output arrived empty, smoke-android
@@ -502,6 +503,12 @@ jobs:
   smoke-android-test:
     name: smoke-android-test
     needs: [compute-version, build-android, deploy-test]
+    # smoke.yml asks for id-token: its test flow signs up with a real emailed code, read from
+    # mootmaker-email-testing's queue with AWS (android-app.md M8). A called workflow gets no more
+    # than this job grants.
+    permissions:
+      id-token: write
+      contents: read
     uses: geoffweatherall/mootmaker-android/.github/workflows/smoke.yml@main
     with:
       artifact-name: mootmaker-android-${{ needs.compute-version.outputs.version }}
@@ -916,6 +923,12 @@ jobs:
   smoke-android-production:
     name: smoke-android-production
     needs: [compute-version, build-android, deploy-production]
+    # smoke.yml asks for id-token: its test flow signs up with a real emailed code, read from
+    # mootmaker-email-testing's queue with AWS (android-app.md M8). A called workflow gets no more
+    # than this job grants.
+    permissions:
+      id-token: write
+      contents: read
     uses: geoffweatherall/mootmaker-android/.github/workflows/smoke.yml@main
     with:
       artifact-name: mootmaker-android-${{ needs.compute-version.outputs.version }}
