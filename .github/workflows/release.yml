@@ -494,12 +494,17 @@ jobs:
   # The Android release APK from build-android, on an emulator, pointed at test: the read-only demo
   # sign-in, then the home agenda must render (mootmaker-android's smoke/demo-sign-in.yaml, run by
   # Maestro). Production waits for it, like the web smoke test.
+  # artifact-name is built from the version here, NOT read from build-android's output. The release
+  # key's alias is stored as a secret and is "mootmaker", so GitHub drops any job output containing
+  # that text ("Skip output ... since it may contain secret"): the output arrived empty, smoke-android
+  # downloaded every artifact in the run, and its checksum step found no .sha256. The name is
+  # "mootmaker-android-<version>", set by mootmaker-android's release-build.yml.
   smoke-android-test:
     name: smoke-android-test
     needs: [compute-version, build-android, deploy-test]
     uses: geoffweatherall/mootmaker-android/.github/workflows/smoke.yml@main
     with:
-      artifact-name: ${{ needs.build-android.outputs.artifact-name }}
+      artifact-name: mootmaker-android-${{ needs.compute-version.outputs.version }}
       environment: test
       ref: ${{ needs.compute-version.outputs.android-sha }}
 
@@ -913,7 +918,7 @@ jobs:
     needs: [compute-version, build-android, deploy-production]
     uses: geoffweatherall/mootmaker-android/.github/workflows/smoke.yml@main
     with:
-      artifact-name: ${{ needs.build-android.outputs.artifact-name }}
+      artifact-name: mootmaker-android-${{ needs.compute-version.outputs.version }}
       environment: production
       ref: ${{ needs.compute-version.outputs.android-sha }}
 
@@ -937,7 +942,7 @@ jobs:
       - uses: actions/download-artifact@v4
         if: needs.build-android.result == 'success'
         with:
-          name: ${{ needs.build-android.outputs.artifact-name }}
+          name: mootmaker-android-${{ needs.compute-version.outputs.version }}
           path: apk
 
       - name: Publish the release record
