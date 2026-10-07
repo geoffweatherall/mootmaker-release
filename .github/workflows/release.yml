@@ -3,12 +3,18 @@
 # Nothing here runs automatically. A merge to main in any component repo changes nothing until
 # someone deliberately starts a release (Decision 1). The shape is:
 #
-#   compute-version -> build-{api,webapp,demo-data} -> tag -> deploy test -> smoke test
-#                   -> deploy production -> smoke production -> record-outcome
+#   compute-version -> build-{api,webapp,demo-data,android} -> tag -> deploy test
+#                   -> smoke test (web and Android) -> deploy production
+#                   -> smoke production (web and Android) -> record-outcome
+#
+# The Android app (mootmaker/designs/android-app.md, Q3-A) is a fourth component with nothing to
+# deploy: build-android builds and signs its APK once, the smoke jobs install that APK, and
+# record-outcome attaches it to the Release only when every stage passed. An APK can't be
+# un-published from phones, so it is published last.
 #
 # Two properties are load-bearing and easy to break by rearranging jobs:
 #
-#   1. TAGS ARE PUSHED ONLY AFTER ALL THREE BUILDS PASS (Decision 4), so a tag always names a
+#   1. TAGS ARE PUSHED ONLY AFTER ALL FOUR BUILDS PASS (Decision 4), so a tag always names a
 #      commit that was actually proven. A release that fails later simply never reuses its version
 #      number - the next attempt computes a fresh one. Nothing is ever un-tagged.
 #
@@ -61,6 +67,7 @@ jobs:
       api-sha: ${{ steps.shas.outputs.api }}
       webapp-sha: ${{ steps.shas.outputs.webapp }}
       demo-data-sha: ${{ steps.shas.outputs.demo_data }}
+      android-sha: ${{ steps.shas.outputs.android }}
     steps:
       - name: Compute the next version
         id: next
@@ -112,7 +119,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          for repo in mootmaker-api mootmaker-webapp mootmaker-demo-data; do
+          for repo in mootmaker-api mootmaker-webapp mootmaker-demo-data mootmaker-android; do
             sha="$(gh api "repos/${GITHUB_REPOSITORY_OWNER}/${repo}/commits/main" --jq .sha)"
             echo "${repo}: ${sha}"
             echo "${repo//mootmaker-/}=${sha}" | tr '-' '_' >> "$GITHUB_OUTPUT"
@@ -172,12 +179,34 @@ jobs:
       version: ${{ needs.compute-version.outputs.version }}
       ref: ${{ needs.compute-version.outputs.demo-data-sha }}
 
-  # Only reached when all three builds are green, which is the whole point: a tag marks a commit
+  # The Android app: builds and signs the release APK once, runs the app's acceptance suite against
+  # that APK in its own rel-and ephemeral environment, and uploads it (android-app.md Q3-A). The
+  # signing key lives on THIS repository only, and a called workflow sees only its caller's
+  # secrets, so they are passed explicitly. No secret means the build fails rather than signing
+  # with anything else.
+  build-android:
+    name: build-android
+    needs: compute-version
+    permissions:
+      id-token: write
+      contents: read
+    uses: geoffweatherall/mootmaker-android/.github/workflows/release-build.yml@main
+    with:
+      version: ${{ needs.compute-version.outputs.version }}
+      ref: ${{ needs.compute-version.outputs.android-sha }}
+      signing: release
+    secrets:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+
+  # Only reached when all four builds are green, which is the whole point: a tag marks a commit
   # that was proven, never one that failed (Decision 4). This is the one place a cross-repo write
   # is unavoidable, and the only place the PAT is used (Decision 3).
   tag:
     name: tag
-    needs: [compute-version, build-api, build-webapp, build-demo-data]
+    needs: [compute-version, build-api, build-webapp, build-demo-data, build-android]
     runs-on: ubuntu-24.04
     outputs:
       # record-outcome branches on this rather than on later jobs' success. Set the moment the tags
@@ -188,7 +217,7 @@ jobs:
       - name: Push the version tag to every repository
         id: push
         env:
-          # contents: write, scoped to exactly these four repositories and nothing else. The one
+          # contents: write, scoped to exactly these five repositories and nothing else. The one
           # accepted long-lived-credential exception in this design (Decision 3) - its value never
           # passes through a session or a log.
           GH_TOKEN: ${{ secrets.RELEASE_TAG_PAT }}
@@ -196,6 +225,7 @@ jobs:
           API_SHA: ${{ needs.compute-version.outputs.api-sha }}
           WEBAPP_SHA: ${{ needs.compute-version.outputs.webapp-sha }}
           DEMO_DATA_SHA: ${{ needs.compute-version.outputs.demo-data-sha }}
+          ANDROID_SHA: ${{ needs.compute-version.outputs.android-sha }}
         run: |
           set -euo pipefail
           tag="v${VERSION}"
@@ -212,6 +242,7 @@ jobs:
           tag_repo mootmaker-api "${API_SHA}"
           tag_repo mootmaker-webapp "${WEBAPP_SHA}"
           tag_repo mootmaker-demo-data "${DEMO_DATA_SHA}"
+          tag_repo mootmaker-android "${ANDROID_SHA}"
           # This repo has no deployable artifact either, but it is where the Release is published,
           # so keeping its tag and that Release together is simpler than splitting them.
           tag_repo mootmaker-release "${GITHUB_SHA}"
@@ -428,11 +459,23 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  # The Android release APK from build-android, on an emulator, pointed at test: the read-only demo
+  # sign-in, then the home agenda must render (mootmaker-android's smoke/demo-sign-in.yaml, run by
+  # Maestro). Production waits for it, like the web smoke test.
+  smoke-android-test:
+    name: smoke-android-test
+    needs: [compute-version, build-android, deploy-test]
+    uses: geoffweatherall/mootmaker-android/.github/workflows/smoke.yml@main
+    with:
+      artifact-name: ${{ needs.build-android.outputs.artifact-name }}
+      environment: test
+      ref: ${{ needs.compute-version.outputs.android-sha }}
+
   # Only reached when test's smoke test passed. Identical in shape to deploy-test, promoting the
   # SAME artifacts again - the third deployment of one build, never a rebuild (Decision 8).
   deploy-production:
     name: deploy-production
-    needs: [compute-version, smoke-test-test]
+    needs: [compute-version, smoke-test-test, smoke-android-test]
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
@@ -824,9 +867,21 @@ jobs:
             "$RUNNER_TEMP/smoke-rollback.log"
 
 
+  # The same read-only flow against production. A failure here does NOT roll production back: the
+  # web smoke test decides that, and the API and webapp may be fine. It does stop the APK being
+  # published, because record-outcome publishes only when every stage passed.
+  smoke-android-production:
+    name: smoke-android-production
+    needs: [compute-version, build-android, deploy-production]
+    uses: geoffweatherall/mootmaker-android/.github/workflows/smoke.yml@main
+    with:
+      artifact-name: ${{ needs.build-android.outputs.artifact-name }}
+      environment: production
+      ref: ${{ needs.compute-version.outputs.android-sha }}
+
   record-outcome:
     name: record-outcome
-    needs: [compute-version, build-api, build-webapp, build-demo-data, tag, deploy-test, smoke-test-test, deploy-production, smoke-test-production, rollback-production, smoke-test-rollback]
+    needs: [compute-version, build-api, build-webapp, build-demo-data, build-android, tag, deploy-test, smoke-test-test, smoke-android-test, deploy-production, smoke-test-production, smoke-android-production, rollback-production, smoke-test-rollback]
     # if: always() is the whole mechanism. A normal job stops when something upstream fails; this
     # one must run regardless, or a failed release leaves tags on GitHub with nothing saying so.
     if: always()
@@ -839,6 +894,14 @@ jobs:
       # record-outcome itself died with "Resource not accessible by integration (createIssue)".
       issues: write
     steps:
+      # The APK build-android signed and the smoke jobs tested, attached to the Release only on
+      # success. Absent when build-android failed, which the success branch below never reaches.
+      - uses: actions/download-artifact@v4
+        if: needs.build-android.result == 'success'
+        with:
+          name: ${{ needs.build-android.outputs.artifact-name }}
+          path: apk
+
       - name: Publish the release record
         env:
           GH_TOKEN: ${{ github.token }}
@@ -850,9 +913,13 @@ jobs:
           API_SHA: ${{ needs.compute-version.outputs.api-sha }}
           WEBAPP_SHA: ${{ needs.compute-version.outputs.webapp-sha }}
           DEMO_DATA_SHA: ${{ needs.compute-version.outputs.demo-data-sha }}
+          ANDROID_SHA: ${{ needs.compute-version.outputs.android-sha }}
           BUILD_API: ${{ needs.build-api.result }}
           BUILD_WEBAPP: ${{ needs.build-webapp.result }}
           BUILD_DEMO_DATA: ${{ needs.build-demo-data.result }}
+          BUILD_ANDROID: ${{ needs.build-android.result }}
+          SMOKE_ANDROID_TEST: ${{ needs.smoke-android-test.result }}
+          SMOKE_ANDROID_PROD: ${{ needs.smoke-android-production.result }}
           DEPLOY_TEST: ${{ needs.deploy-test.result }}
           SMOKE_TEST: ${{ needs.smoke-test-test.result }}
           DEPLOY_PROD: ${{ needs.deploy-production.result }}
@@ -872,10 +939,13 @@ jobs:
             echo "| build+acceptance mootmaker-api | ${BUILD_API} |"
             echo "| build+acceptance mootmaker-webapp | ${BUILD_WEBAPP} |"
             echo "| build+acceptance mootmaker-demo-data | ${BUILD_DEMO_DATA} |"
+            echo "| build+acceptance mootmaker-android | ${BUILD_ANDROID} |"
             echo "| deploy-to-test | ${DEPLOY_TEST} |"
             echo "| smoke-test-test | ${SMOKE_TEST} |"
+            echo "| smoke-android-test | ${SMOKE_ANDROID_TEST} |"
             echo "| deploy-to-production | ${DEPLOY_PROD} |"
             echo "| smoke-test-production | ${SMOKE_PROD} |"
+            echo "| smoke-android-production | ${SMOKE_ANDROID_PROD} |"
             echo
 
             # A rollback is never left implicit in the record. OQ-2 accepted that an automatic
@@ -912,6 +982,7 @@ jobs:
             echo "| mootmaker-api | \`${API_SHA}\` |"
             echo "| mootmaker-webapp | \`${WEBAPP_SHA}\` |"
             echo "| mootmaker-demo-data | \`${DEMO_DATA_SHA}\` |"
+            echo "| mootmaker-android | \`${ANDROID_SHA}\` |"
             echo
             echo "[Actions run](${run_url})"
           } > body.md
@@ -922,10 +993,20 @@ jobs:
           # and an issue is the honest artifact.
           if [ "${TAG_PUSHED}" = "true" ] && [ "${BUILD_API}" = "success" ] \
              && [ "${BUILD_WEBAPP}" = "success" ] && [ "${BUILD_DEMO_DATA}" = "success" ] \
+             && [ "${BUILD_ANDROID}" = "success" ] \
              && [ "${DEPLOY_TEST}" = "success" ] && [ "${SMOKE_TEST}" = "success" ] \
-             && [ "${DEPLOY_PROD}" = "success" ] && [ "${SMOKE_PROD}" = "success" ]; then
+             && [ "${SMOKE_ANDROID_TEST}" = "success" ] \
+             && [ "${DEPLOY_PROD}" = "success" ] && [ "${SMOKE_PROD}" = "success" ] \
+             && [ "${SMOKE_ANDROID_PROD}" = "success" ]; then
+            # The Android app is a preview until it reaches parity with the webapp (android-app.md).
+            apk="apk/mootmaker-android-${VERSION}.apk"
+            {
+              echo
+              echo "**Android app (preview):** \`mootmaker-android-${VERSION}.apk\`, SHA-256 in the \`.sha256\` file beside it."
+            } >> body.md
             gh release create "v${VERSION}" --repo "$GITHUB_REPOSITORY" \
-              --title "v${VERSION}" --notes-file body.md
+              --title "v${VERSION}" --notes-file body.md \
+              "${apk}#mootmaker-android-${VERSION}.apk (preview)" "${apk}.sha256"
             echo "Published release v${VERSION}"
           elif [ "${TAG_PUSHED}" = "true" ]; then
             gh release create "v${VERSION}" --repo "$GITHUB_REPOSITORY" \

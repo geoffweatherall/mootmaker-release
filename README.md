@@ -8,7 +8,11 @@ Hosts the release pipeline that ships [mootmaker-api](https://github.com/geoffwe
 [mootmaker-webapp](https://github.com/geoffweatherall/mootmaker-webapp), and
 [mootmaker-demo-data](https://github.com/geoffweatherall/mootmaker-demo-data) to `test` and
 `production` — versioning, tagging, building and acceptance-testing all three together, promoting
-through `test`, then `production`, with a smoke test at each stage.
+through `test`, then `production`, with a smoke test at each stage. It also builds, tests and
+publishes the [mootmaker-android](https://github.com/geoffweatherall/mootmaker-android) app under the
+same version: an APK has nothing to deploy, so it is smoke-tested against `test` and `production`
+and attached to the GitHub Release only when every stage passed
+([android-app.md](https://github.com/geoffweatherall/mootmaker/blob/main/designs/android-app.md) Q3-A).
 
 Releasing is a deliberate, explicitly-initiated act (`gh workflow run` — a human or an AI), never a
 side effect of merging to `main`. See
@@ -35,7 +39,7 @@ whoever dispatches it rather than with any gate in the pipeline. Four checks, in
 change prompted it:
 
 ```sh
-for r in mootmaker mootmaker-api mootmaker-webapp mootmaker-demo-data mootmaker-release; do
+for r in mootmaker mootmaker-api mootmaker-webapp mootmaker-demo-data mootmaker-android mootmaker-release; do
   echo "=== $r ==="
   gh issue list --repo geoffweatherall/$r --state open --limit 40 \
     --jq '.[] | "#\(.number)\t\(.title)"' --json number,title
@@ -97,14 +101,23 @@ input (`patch`/`minor`/`major`). Built so far:
 | Stage | Status |
 |---|---|
 | `compute-version` — next version from this repo's GitHub Releases; pins each component's commit | built |
-| `build-api` / `build-webapp` / `build-demo-data` — each component's own `release-build.yml`, in parallel | built |
-| `tag` — pushes `vX.Y.Z` to all four repos, only once every build is green | built |
-| `deploy-test` → `smoke-test-test` | built |
-| `deploy-production` → `smoke-test-production` → `rollback-production` → `smoke-test-rollback` | built |
-| `record-outcome` — the GitHub Release, or a FAILED prerelease, or an issue | built |
+| `build-api` / `build-webapp` / `build-demo-data` / `build-android` — each component's own `release-build.yml`, in parallel | built |
+| `tag` — pushes `vX.Y.Z` to all five repos, only once every build is green | built |
+| `deploy-test` → `smoke-test-test` and `smoke-android-test` | built |
+| `deploy-production` → `smoke-test-production` and `smoke-android-production` → `rollback-production` → `smoke-test-rollback` | built |
+| `record-outcome` — the GitHub Release (with the Android APK and its SHA-256), or a FAILED prerelease, or an issue | built |
+
+**The Android stages need, before the first release that includes them:** the release keystore as
+four repository secrets here (`ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`,
+`ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`; `build-android` passes them explicitly, because a called
+workflow sees only its caller's secrets), and `mootmaker-android` added to `RELEASE_TAG_PAT`'s
+repositories. Without the keystore, `build-android` fails before building rather than signing with
+any other key. The keystore is generated and backed up by Geoff and never enters a cloud session.
+An Android smoke failure on `production` does not roll production back (the web smoke test decides
+that); it stops the APK being published and marks the release FAILED.
 
 Two things in there are easy to break by rearranging and are commented as such in the workflow:
-tags are pushed **only after** all three builds pass, so a tag always names a proven commit; and
+tags are pushed **only after** all four builds pass, so a tag always names a proven commit; and
 `record-outcome` runs `if: always()` and branches on the tag job's **own output** rather than on
 whether later jobs succeeded, which is what prevents tags existing with nothing recording them.
 
@@ -121,6 +134,6 @@ fault is fixed — why sampling can show a rate improved but cannot show it is s
 would actually cost in wall-clock and AWS spend, and why the deterministic regression test matters
 more than the run count.
 
-Each component repo (`mootmaker-api`, `mootmaker-webapp`, `mootmaker-demo-data`) owns its own
+Each component repo (`mootmaker-api`, `mootmaker-webapp`, `mootmaker-demo-data`, `mootmaker-android`) owns its own
 build-and-deploy logic as a reusable workflow (`on: workflow_call`) — this repo calls those, it
 doesn't duplicate them.

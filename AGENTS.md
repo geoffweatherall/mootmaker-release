@@ -11,11 +11,11 @@ for the actual design.
 ## Working here
 
 - **`release.yml` is complete and in regular use.** Every stage exists and runs: version
-  computation, the three component builds, tagging, promotion to `test` and then `production` with a
+  computation, the four component builds (the Android app included), tagging, promotion to `test` and then `production` with a
   smoke test either side, automatic rollback, and the release record. The README's stage table is
   the current picture.
 - **Running `release.yml` deploys to `test` and then `production`.** It pushes real `vX.Y.Z` tags to
-  all four repositories, deploys both standing environments, and creates a GitHub Release. A failed
+  all five repositories, deploys both standing environments, and creates a GitHub Release. A failed
   attempt still consumes its version number — tags are never reused, and a **retry always uses
   `patch`**, never a repeat of the original bump, which would double-count it. Do not dispatch it
   casually to "see what happens", and read "Before starting a release" in the README first.
@@ -25,7 +25,7 @@ for the actual design.
   the pipeline has no step for, or a known-broken path the run is about to exercise for the first
   time. The README's "Before starting a release" gives the command and the three shapes to look for.
 - **The PAT is the one long-lived credential in this design.** `RELEASE_TAG_PAT` is `contents: write`
-  on exactly four repos and is used in exactly one place, the `tag` job. Its value must never be
+  on exactly five repos and is used in exactly one place, the `tag` job. Its value must never be
   echoed, logged, or pass through a session.
 - **This repo doesn't own any component's build/deploy logic.** `mootmaker-api`,
   `mootmaker-webapp`, and `mootmaker-demo-data` each own their own build-and-deploy as a reusable
