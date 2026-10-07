@@ -286,6 +286,11 @@ jobs:
   deploy-test:
     name: deploy-test
     needs: [compute-version, tag]
+    # GitHub skips a job when ANY ancestor was skipped, not just a direct need, unless its `if`
+    # uses a status function. A build-android skipped for want of a keystore is an ancestor of
+    # everything from tag on, so each job in the chain states its own condition (v5.10.0 skipped
+    # every deploy without this).
+    if: ${{ !cancelled() && needs.tag.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
@@ -409,6 +414,8 @@ jobs:
   smoke-test-test:
     name: smoke-test-test
     needs: [compute-version, deploy-test]
+    # See deploy-test: an explicit condition, so a skipped build-android upstream doesn't skip this.
+    if: ${{ !cancelled() && needs.deploy-test.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -625,6 +632,8 @@ jobs:
   smoke-test-production:
     name: smoke-test-production
     needs: [compute-version, deploy-production]
+    # See deploy-test: an explicit condition, so a skipped build-android upstream doesn't skip this.
+    if: ${{ !cancelled() && needs.deploy-production.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
