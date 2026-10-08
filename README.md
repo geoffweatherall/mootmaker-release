@@ -20,14 +20,14 @@ side effect of merging to `main`. See
 for the full design and reasoning.
 
 **Status: built and in regular use (updated 2026-09-05).** The design itself remains `Drafting`
-until Geoff promotes it, but every stage now exists and runs: version computation, the three
+until Geoff promotes it, but every stage now exists and runs: version computation, the four
 component builds, tagging, promotion to `test` and then `production` with a smoke test either side,
 automatic rollback, and the release record. Twenty versions have run through it so far; ten
 recorded a failure, which is visible precisely because a failed run publishes a `FAILED` prerelease
 rather than silently discarding the version it claimed.
 
-Running `release.yml` today builds, acceptance-tests and tags all three components, deploys them to
-`test`, smoke-tests that, promotes the same artifacts to `production`, smoke-tests again, and rolls
+Running `release.yml` today builds, acceptance-tests and tags all four components, deploys the three
+deployable ones to `test`, smoke-tests that (the new APK and the last release's, the n-1 check), promotes the same artifacts to `production`, smoke-tests again, and rolls
 `production` back automatically if that fails.
 
 ## Before starting a release
@@ -89,8 +89,8 @@ produces `v3.0.0`, skipping `2.x` entirely for a release whose only fault was fa
 ## Why a separate repo
 
 Not the hub (`mootmaker` — deliberately holds no deployed code, and firing real deploys from a docs
-repo blurs that), and not one of the three component repos it releases (arbitrarily picking one to
-coordinate the other two is worse than a dedicated, single-minded home). See the design doc's own
+repo blurs that), and not one of the four component repos it releases (arbitrarily picking one to
+coordinate the other three is worse than a dedicated, single-minded home). See the design doc's own
 "Trade-offs and decisions" for the fuller reasoning.
 
 ## What lives here
@@ -103,7 +103,7 @@ input (`patch`/`minor`/`major`). Built so far:
 | `compute-version` — next version from this repo's GitHub Releases; pins each component's commit | built |
 | `build-api` / `build-webapp` / `build-demo-data` / `build-android` — each component's own `release-build.yml`, in parallel | built |
 | `tag` — pushes `vX.Y.Z` to all five repos, only once every build is green | built |
-| `deploy-test` → `smoke-test-test` and `smoke-android-test` | built |
+| `deploy-test` → `smoke-test-test`, `smoke-android-test`, and `smoke-android-n-1-test` (the last release's APK, from `previous-android`, against the new `test`; skipped if that release had none) | built |
 | `deploy-production` → `smoke-test-production` and `smoke-android-production` → `rollback-production` → `smoke-test-rollback` | built |
 | `record-outcome` — the GitHub Release (with the Android APK and its SHA-256), or a FAILED prerelease, or an issue | built |
 
@@ -113,6 +113,8 @@ four repository secrets here (`ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSW
 workflow sees only its caller's secrets), and `mootmaker-android` added to `RELEASE_TAG_PAT`'s
 repositories. Until the `ANDROID_KEYSTORE_BASE64` secret exists, every Android stage is skipped
 (a notice says so) and the release ships the other three components exactly as before. The keystore is generated and backed up by Geoff and never enters a cloud session.
+The n-1 check exists because installed apps don't update when the API deploys: a failure there stops
+the release before `production`, like any `test` smoke failure.
 An Android smoke failure on `production` does not roll production back (the web smoke test decides
 that); it stops the APK being published and marks the release FAILED.
 

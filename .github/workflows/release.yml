@@ -515,15 +515,68 @@ jobs:
       environment: test
       ref: ${{ needs.compute-version.outputs.android-sha }}
 
+  # The n-1 check (android-app.md, "Release pipeline"): the APK people already have installed, the
+  # last successful release's, against the NEW test API. Phones don't update when the API deploys,
+  # so this is what catches an API change that breaks an installed app. Its flow comes from that
+  # release's own tag in mootmaker-android, matching the app it drives. Nothing to check when the
+  # last release published no APK.
+  previous-android:
+    name: previous-android
+    needs: [compute-version]
+    if: needs.compute-version.outputs.android == 'true' && needs.compute-version.outputs.previous != ''
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      found: ${{ steps.download.outputs.found }}
+    steps:
+      - name: Download the last release's APK
+        id: download
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREVIOUS: ${{ needs.compute-version.outputs.previous }}
+        run: |
+          mkdir apk
+          if gh release view "$PREVIOUS" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | grep -q '\.apk$'; then
+            gh release download "$PREVIOUS" --repo "$GITHUB_REPOSITORY" --pattern '*.apk' --pattern '*.apk.sha256' --dir apk
+            ls -l apk
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "${PREVIOUS} published no APK, so there is no installed app to check."
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/upload-artifact@v4
+        if: steps.download.outputs.found == 'true'
+        with:
+          name: android-previous-release
+          path: apk/
+
+  smoke-android-n-1-test:
+    name: smoke-android-n-1-test
+    needs: [compute-version, previous-android, deploy-test]
+    if: needs.previous-android.outputs.found == 'true' && needs.deploy-test.result == 'success'
+    # As smoke-android-test: the test flow signs up with a real emailed code.
+    permissions:
+      id-token: write
+      contents: read
+    uses: geoffweatherall/mootmaker-android/.github/workflows/smoke.yml@main
+    with:
+      artifact-name: android-previous-release
+      environment: test
+      ref: ${{ needs.compute-version.outputs.previous }}
+
   # Only reached when test's smoke test passed. Identical in shape to deploy-test, promoting the
   # SAME artifacts again - the third deployment of one build, never a rebuild (Decision 8).
   deploy-production:
     name: deploy-production
-    needs: [compute-version, smoke-test-test, smoke-android-test]
+    needs: [compute-version, smoke-test-test, smoke-android-test, previous-android, smoke-android-n-1-test]
     # As at tag: a smoke-android-test skipped for want of a keystore must not hold production back.
+    # The n-1 check holds it back only by failing: it is skipped, not failed, when the last release
+    # had no APK.
     if: >-
       !cancelled() && needs.smoke-test-test.result == 'success' &&
-      (needs.smoke-android-test.result == 'success' || needs.compute-version.outputs.android != 'true')
+      (needs.smoke-android-test.result == 'success' || needs.compute-version.outputs.android != 'true') &&
+      needs.previous-android.result != 'failure' && needs.smoke-android-n-1-test.result != 'failure'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
@@ -937,7 +990,7 @@ jobs:
 
   record-outcome:
     name: record-outcome
-    needs: [compute-version, build-api, build-webapp, build-demo-data, build-android, tag, deploy-test, smoke-test-test, smoke-android-test, deploy-production, smoke-test-production, smoke-android-production, rollback-production, smoke-test-rollback]
+    needs: [compute-version, build-api, build-webapp, build-demo-data, build-android, tag, deploy-test, smoke-test-test, smoke-android-test, smoke-android-n-1-test, deploy-production, smoke-test-production, smoke-android-production, rollback-production, smoke-test-rollback]
     # if: always() is the whole mechanism. A normal job stops when something upstream fails; this
     # one must run regardless, or a failed release leaves tags on GitHub with nothing saying so.
     if: always()
@@ -976,6 +1029,7 @@ jobs:
           BUILD_DEMO_DATA: ${{ needs.build-demo-data.result }}
           BUILD_ANDROID: ${{ needs.build-android.result }}
           SMOKE_ANDROID_TEST: ${{ needs.smoke-android-test.result }}
+          SMOKE_ANDROID_N1: ${{ needs.smoke-android-n-1-test.result }}
           SMOKE_ANDROID_PROD: ${{ needs.smoke-android-production.result }}
           DEPLOY_TEST: ${{ needs.deploy-test.result }}
           SMOKE_TEST: ${{ needs.smoke-test-test.result }}
@@ -1000,6 +1054,7 @@ jobs:
             echo "| deploy-to-test | ${DEPLOY_TEST} |"
             echo "| smoke-test-test | ${SMOKE_TEST} |"
             echo "| smoke-android-test | ${SMOKE_ANDROID_TEST} |"
+            echo "| smoke-android-n-1-test (${PREVIOUS:-none}'s APK) | ${SMOKE_ANDROID_N1} |"
             echo "| deploy-to-production | ${DEPLOY_PROD} |"
             echo "| smoke-test-production | ${SMOKE_PROD} |"
             echo "| smoke-android-production | ${SMOKE_ANDROID_PROD} |"
@@ -1056,13 +1111,12 @@ jobs:
                   && [ "${SMOKE_ANDROID_TEST}" = "success" ] && [ "${SMOKE_ANDROID_PROD}" = "success" ]; }; }; then
             apk_files=()
             if [ "${ANDROID}" = "true" ]; then
-              # The Android app is a preview until it reaches parity with the webapp (android-app.md).
               apk="apk/mootmaker-android-${VERSION}.apk"
               {
                 echo
-                echo "**Android app (preview):** \`mootmaker-android-${VERSION}.apk\`, SHA-256 in the \`.sha256\` file beside it."
+                echo "**Android app:** \`mootmaker-android-${VERSION}.apk\`, SHA-256 in the \`.sha256\` file beside it."
               } >> body.md
-              apk_files=("${apk}#mootmaker-android-${VERSION}.apk (preview)" "${apk}.sha256")
+              apk_files=("${apk}#mootmaker-android-${VERSION}.apk" "${apk}.sha256")
             fi
             gh release create "v${VERSION}" --repo "$GITHUB_REPOSITORY" \
               --title "v${VERSION}" --notes-file body.md "${apk_files[@]}"
