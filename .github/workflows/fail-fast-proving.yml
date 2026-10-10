@@ -1,0 +1,54 @@
+# THROWAWAY: proves fail-fast in a real Actions run without a release. Never merged.
+name: fail-fast proving
+on:
+  pull_request:
+    paths: ['.github/workflows/fail-fast-proving*.yml']
+permissions:
+  contents: read
+  actions: read
+  checks: read
+jobs:
+  # A build that fails at ~60s, then spends 3 minutes "tearing down" before the job concludes:
+  # the watcher must react to the failed STEP, not wait for the job.
+  breaks:
+    runs-on: ubuntu-24.04
+    steps:
+      - run: sleep 60; echo "failing on purpose"; exit 1
+      - if: always()
+        run: sleep 180; echo "slow teardown done"
+  # Finishes its wrapped command before anything fails: must pass through as success.
+  healthy:
+    uses: ./.github/workflows/fail-fast-proving-called.yml
+    with: { seconds: 20 }
+  # Wrapped command would run 10 minutes: must be stopped about a minute after 'breaks' fails,
+  # with its always() teardown still running.
+  stopped:
+    uses: ./.github/workflows/fail-fast-proving-called.yml
+    with: { seconds: 600 }
+  report:
+    needs: [breaks, healthy, stopped]
+    if: always()
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - run: |
+          set -euo pipefail
+          jobs_json="$( { gh api --paginate \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}/jobs?per_page=100" \
+            --jq '.jobs[]' 2>/dev/null || true; } | jq -s . 2>/dev/null || echo '[]')"
+          shown_result() {
+            local job="$1" result="$2" id titles
+            if [ "${result}" = "failure" ]; then
+              id="$(jq -r --arg n "${job} / build" '[.[] | select(.name == $n)][0].id // empty' <<< "${jobs_json}" 2>/dev/null || true)"
+              titles="$(gh api "repos/${GITHUB_REPOSITORY}/check-runs/${id:-0}/annotations" --jq '.[].title' 2>/dev/null || true)"
+              if [ -n "${id}" ] && grep -qx 'Stopped early' <<< "${titles}"; then
+                echo "stopped early (another build failed)"
+                return
+              fi
+            fi
+            echo "${result}"
+          }
+          echo "breaks:  ${{ needs.breaks.result }}"
+          echo "healthy: $(shown_result healthy '${{ needs.healthy.result }}')"
+          echo "stopped: $(shown_result stopped '${{ needs.stopped.result }}')"

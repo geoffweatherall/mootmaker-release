@@ -1,0 +1,24 @@
+# THROWAWAY: the called half of fail-fast-proving.yml, shaped like a component release-build.
+name: fail-fast proving (called)
+on:
+  workflow_call:
+    inputs:
+      seconds: { type: number, required: true }
+permissions:
+  contents: read
+  actions: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      # The remote form the component repos use, at this branch, not a local ./ path.
+      - uses: geoffweatherall/mootmaker-release/.github/actions/fail-fast@feature/release-fail-fast
+      - name: Gate, as before a deploy
+        run: fail-fast check
+      - name: Tests, as an acceptance run
+        run: |
+          echo "started $(date -u +%T)"
+          fail-fast run -- bash -c 'sleep ${{ inputs.seconds }} & wait; echo "command finished $(date -u +%T)"'
+      - name: Teardown, as always()
+        if: always()
+        run: echo "teardown ran $(date -u +%T)"
