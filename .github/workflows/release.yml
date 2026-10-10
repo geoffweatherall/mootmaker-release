@@ -150,6 +150,10 @@ jobs:
     permissions:
       id-token: write
       contents: read
+      # Lets the build read this run's other jobs, so it can stop early once one of them has
+      # failed (fail-fast, in .github/actions/; mootmaker/designs/cost-reduction.md Measure 3).
+      # A called workflow can never hold more than its caller grants, so each build job needs it.
+      actions: read
     uses: geoffweatherall/mootmaker-api/.github/workflows/release-build.yml@main
     with:
       version: ${{ needs.compute-version.outputs.version }}
@@ -177,6 +181,7 @@ jobs:
     permissions:
       id-token: write
       contents: read
+      actions: read
     uses: geoffweatherall/mootmaker-webapp/.github/workflows/release-build.yml@main
     with:
       version: ${{ needs.compute-version.outputs.version }}
@@ -189,6 +194,7 @@ jobs:
     permissions:
       id-token: write
       contents: read
+      actions: read
     uses: geoffweatherall/mootmaker-demo-data/.github/workflows/release-build.yml@main
     with:
       version: ${{ needs.compute-version.outputs.version }}
@@ -206,6 +212,7 @@ jobs:
     permissions:
       id-token: write
       contents: read
+      actions: read
     uses: geoffweatherall/mootmaker-android/.github/workflows/release-build.yml@main
     with:
       version: ${{ needs.compute-version.outputs.version }}
@@ -1002,6 +1009,10 @@ jobs:
       # tagged-then-failed case, so this gap stayed hidden until a run failed before tagging and
       # record-outcome itself died with "Resource not accessible by integration (createIssue)".
       issues: write
+      # Reading the build jobs and their annotations, to tell a build that failed from one that
+      # fail-fast stopped because another failed (see shown_result below).
+      actions: read
+      checks: read
     steps:
       # The APK build-android signed and the smoke jobs tested, attached to the Release only on
       # success. Absent when build-android failed, which the success branch below never reaches.
@@ -1042,15 +1053,35 @@ jobs:
           set -euo pipefail
           run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
 
+          # A build that fail-fast stopped also ends as 'failure', which would make the table say
+          # every build failed when only one did. Its log carries a "Stopped early" annotation, so
+          # say that instead. Display only - every decision below uses the raw results - and any
+          # API trouble falls back to the raw result, because this job must not fail over it.
+          jobs_json="$( { gh api --paginate \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}/jobs?per_page=100" \
+            --jq '.jobs[]' 2>/dev/null || true; } | jq -s . 2>/dev/null || echo '[]')"
+          shown_result() {
+            local job="$1" result="$2" id titles
+            if [ "${result}" = "failure" ]; then
+              id="$(jq -r --arg n "${job} / build" '[.[] | select(.name == $n)][0].id // empty' <<< "${jobs_json}" 2>/dev/null || true)"
+              titles="$(gh api "repos/${GITHUB_REPOSITORY}/check-runs/${id:-0}/annotations" --jq '.[].title' 2>/dev/null || true)"
+              if [ -n "${id}" ] && grep -qx 'Stopped early' <<< "${titles}"; then
+                echo "stopped early (another build failed)"
+                return
+              fi
+            fi
+            echo "${result}"
+          }
+
           {
             echo "Bump: \`${BUMP}\`"
             echo
             echo "| Stage | Result |"
             echo "|---|---|"
-            echo "| build+acceptance mootmaker-api | ${BUILD_API} |"
-            echo "| build+acceptance mootmaker-webapp | ${BUILD_WEBAPP} |"
-            echo "| build+acceptance mootmaker-demo-data | ${BUILD_DEMO_DATA} |"
-            echo "| build+acceptance mootmaker-android | ${BUILD_ANDROID} |"
+            echo "| build+acceptance mootmaker-api | $(shown_result build-api "${BUILD_API}") |"
+            echo "| build+acceptance mootmaker-webapp | $(shown_result build-webapp "${BUILD_WEBAPP}") |"
+            echo "| build+acceptance mootmaker-demo-data | $(shown_result build-demo-data "${BUILD_DEMO_DATA}") |"
+            echo "| build+acceptance mootmaker-android | $(shown_result build-android "${BUILD_ANDROID}") |"
             echo "| deploy-to-test | ${DEPLOY_TEST} |"
             echo "| smoke-test-test | ${SMOKE_TEST} |"
             echo "| smoke-android-test | ${SMOKE_ANDROID_TEST} |"
