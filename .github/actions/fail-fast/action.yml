@@ -1,0 +1,21 @@
+name: Fail fast
+description: >-
+  Puts `fail-fast` on PATH, so later steps in this job can stop early once another job in the same
+  release run has failed. See the script's header for how it decides, and which steps may use it.
+inputs:
+  token:
+    description: Token that can read this run's jobs (needs actions:read).
+    default: ${{ github.token }}
+runs:
+  using: composite
+  steps:
+    - name: Install fail-fast
+      shell: bash
+      env:
+        TOKEN: ${{ inputs.token }}
+      run: |
+        token_file="${RUNNER_TEMP}/fail-fast-token"
+        ( umask 077 && printf '%s' "${TOKEN}" > "${token_file}" )
+        echo "FAIL_FAST_TOKEN_FILE=${token_file}" >> "$GITHUB_ENV"
+        chmod +x "${GITHUB_ACTION_PATH}/fail-fast"
+        echo "${GITHUB_ACTION_PATH}" >> "$GITHUB_PATH"
