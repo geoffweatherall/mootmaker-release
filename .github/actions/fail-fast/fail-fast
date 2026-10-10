@@ -1,0 +1,147 @@
+#!/usr/bin/env bash
+# Stops a release build early once another job in the same release run has failed.
+#
+# The four component builds run in parallel, and before this nothing stopped the others when one
+# failed: on 2026-10-07 build-android failed after two minutes and build-webapp still ran its
+# 35-minute acceptance suite against real AWS. A release that cannot tag is already lost, so the
+# rest of that work is pure cost. See mootmaker/designs/cost-reduction.md, Measure 3.
+#
+#   fail-fast check            exit 1 if another job in this run has failed, else 0
+#   fail-fast run -- CMD...    run CMD, stopping it if another job fails while it runs
+#
+# "Failed" means another job in this run ATTEMPT has a failed, timed-out or cancelled step or
+# conclusion. Steps are checked as well as jobs because a failing build runs its teardown before
+# the job itself concludes - about ten minutes, for Android.
+#
+# Only ever wrap test steps with `run`. Never wrap deploy or teardown: stopping terraform mid-apply
+# can leave a held state lock and a stranded environment. Gate deploys with `check` instead.
+#
+# The watcher never fails a build on its own account: if the GitHub API cannot be read, the
+# command just carries on as if this script were not there.
+#
+# Environment: GITHUB_REPOSITORY, GITHUB_RUN_ID, GITHUB_RUN_ATTEMPT, RUNNER_NAME (all set by
+# Actions, and in a called workflow they are the CALLER's run), and a token in FAIL_FAST_TOKEN_FILE
+# (written by action.yml) or GH_TOKEN. FAIL_FAST_INTERVAL sets the poll interval in seconds
+# (default 60). FAIL_FAST_JOBS_FILE replaces the API call with a file, for tests.
+set -uo pipefail
+
+interval="${FAIL_FAST_INTERVAL:-60}"
+grace="${FAIL_FAST_GRACE:-60}"
+
+# Prints the run's jobs as JSON ({"jobs": [...]}), or fails.
+jobs_json() {
+  if [[ -n "${FAIL_FAST_JOBS_FILE:-}" ]]; then
+    cat "${FAIL_FAST_JOBS_FILE}"
+    return
+  fi
+  local token="${GH_TOKEN:-}"
+  if [[ -n "${FAIL_FAST_TOKEN_FILE:-}" && -r "${FAIL_FAST_TOKEN_FILE}" ]]; then
+    token="$(cat "${FAIL_FAST_TOKEN_FILE}")"
+  fi
+  GH_TOKEN="${token}" gh api --paginate \
+    "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}/jobs?per_page=100" \
+    --jq '.jobs[]' | jq -s '{jobs: .}'
+}
+
+# Prints "<job name>: <step name>" for the first failure in another job, or nothing.
+# Exit status 2 means the jobs could not be read.
+first_failure() {
+  local json
+  if ! json="$(jobs_json 2>/dev/null)" || [[ -z "${json}" ]]; then
+    return 2
+  fi
+  jq -r --arg me "${RUNNER_NAME:-}" '
+    def bad: . == "failure" or . == "timed_out" or . == "cancelled";
+    [ .jobs[]
+      | select(.runner_name != $me or $me == "")
+      | . as $job
+      | ( [ (.steps // [])[] | select(.conclusion // "" | bad) | "\($job.name): \(.name)" ]
+          + (if (.conclusion // "" | bad) then ["\($job.name)"] else [] end) )
+      | .[] ] | first // empty
+  ' <<< "${json}"
+}
+
+stop_message() {
+  echo "::error title=Stopped early::Another job in this release failed (${1}), so this build stopped instead of spending its remaining time and AWS cost. Its own work did not fail."
+}
+
+cmd_check() {
+  local failed status
+  failed="$(first_failure)"
+  status=$?
+  if [[ ${status} -eq 2 ]]; then
+    echo "fail-fast: could not read this run's jobs; carrying on." >&2
+    return 0
+  fi
+  if [[ -n "${failed}" ]]; then
+    stop_message "${failed}"
+    return 1
+  fi
+  return 0
+}
+
+cmd_run() {
+  if [[ $# -eq 0 ]]; then
+    echo "Usage: fail-fast run -- COMMAND [ARGS...]" >&2
+    return 64
+  fi
+  # A sibling may already have failed; don't start at all if so.
+  cmd_check || return 1
+
+  # Its own process group, so stopping it reaches everything it started (Playwright's workers,
+  # Maven's forked JVM, Gradle's client), not just the top process.
+  setsid "$@" &
+  local pid=$!
+  local warned="" failed="" status
+
+  # Forward a cancellation of this step to the command, so a cancelled run still stops it.
+  trap 'kill -TERM -- "-${pid}" 2>/dev/null' TERM INT
+
+  while kill -0 "${pid}" 2>/dev/null; do
+    # Sleep in one-second slices so a finished command is noticed promptly.
+    local slept=0
+    while (( slept < interval )) && kill -0 "${pid}" 2>/dev/null; do
+      sleep 1
+      slept=$((slept + 1))
+    done
+    kill -0 "${pid}" 2>/dev/null || break
+
+    failed="$(first_failure)"
+    status=$?
+    if [[ ${status} -eq 2 ]]; then
+      [[ -z "${warned}" ]] && echo "fail-fast: could not read this run's jobs; will keep trying." >&2
+      warned=1
+      continue
+    fi
+    if [[ -n "${failed}" ]]; then
+      stop_message "${failed}"
+      kill -TERM -- "-${pid}" 2>/dev/null
+      local waited=0
+      while kill -0 "${pid}" 2>/dev/null && (( waited < grace )); do
+        sleep 1
+        waited=$((waited + 1))
+      done
+      kill -KILL -- "-${pid}" 2>/dev/null
+      wait "${pid}" 2>/dev/null
+      return 1
+    fi
+  done
+
+  wait "${pid}"
+}
+
+case "${1:-}" in
+  check)
+    shift
+    cmd_check "$@"
+    ;;
+  run)
+    shift
+    [[ "${1:-}" == "--" ]] && shift
+    cmd_run "$@"
+    ;;
+  *)
+    echo "Usage: fail-fast check | fail-fast run -- COMMAND [ARGS...]" >&2
+    exit 64
+    ;;
+esac

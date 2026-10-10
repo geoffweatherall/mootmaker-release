@@ -101,7 +101,7 @@ input (`patch`/`minor`/`major`). Built so far:
 | Stage | Status |
 |---|---|
 | `compute-version` — next version from this repo's GitHub Releases; pins each component's commit | built |
-| `build-api` / `build-webapp` / `build-demo-data` / `build-android` — each component's own `release-build.yml`, in parallel | built |
+| `build-api` / `build-webapp` / `build-demo-data` / `build-android` — each component's own `release-build.yml`, in parallel; once one fails, the others stop early (fail-fast, below) | built |
 | `tag` — pushes `vX.Y.Z` to all five repos, only once every build is green | built |
 | `deploy-test` → `smoke-test-test`, `smoke-android-test`, and `smoke-android-n-1-test` (the last release's APK, from `previous-android`, against the new `test`; skipped if that release had none) | built |
 | `deploy-production` → `smoke-test-production` and `smoke-android-production` → `rollback-production` → `smoke-test-rollback` | built |
@@ -129,6 +129,15 @@ same client mootmaker-webapp's suites use, pinned to a tag in `package.json` —
 [mootmaker-email-testing](https://github.com/geoffweatherall/mootmaker-email-testing#using-it-from-tests).
 `scripts/` holds the CloudWatch log shipping that gives each release durable detail
 behind its GitHub Release summary.
+
+`.github/actions/fail-fast/` is the action each component's `release-build.yml` installs so it
+stops early once another job in the run has failed. A release that cannot tag is already lost, so
+the rest of the parallel builds' acceptance runs would only spend time and AWS cost
+([mootmaker/designs/cost-reduction.md](https://github.com/geoffweatherall/mootmaker/blob/main/designs/cost-reduction.md),
+Measure 3). Deploys are gated with `fail-fast check`; only test commands are wrapped with
+`fail-fast run`, never terraform. A stopped build ends as `failure` with a "Stopped early"
+annotation, and `record-outcome` reports it as "stopped early" so the record still names the build
+that actually broke. `./test.sh` beside it is the script's test suite.
 
 [docs/release-confidence.md](docs/release-confidence.md) covers a question this pipeline raised and
 then made measurable: **how many consecutive green releases are enough** to believe an intermittent
