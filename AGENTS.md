@@ -1,70 +1,59 @@
 # mootmaker-release
 
-Hosts the release pipeline that ships `mootmaker-api`, `mootmaker-webapp`, and
-`mootmaker-demo-data` to `test` and `production` together, on deliberate, explicit trigger — never
-on merge to `main`.
+The release pipeline: `release.yml` versions, builds, tests and tags every component together and
+promotes it through `test` to `production`.
 
-**Start by reading [README.md](README.md)**, then
-[`../mootmaker/designs/archive/ci-cd-pipeline.md`](https://github.com/geoffweatherall/mootmaker/blob/main/designs/archive/ci-cd-pipeline.md)
-for the actual design.
+**Read [README.md](README.md) first**, including "Before starting a release". Keep it true in the same pull
+request as any change to the pipeline.
 
 ## Working here
 
-- **`release.yml` is complete and in regular use.** Every stage exists and runs: version
-  computation, the four component builds (the Android app included), tagging, promotion to `test` and then `production` with a
-  smoke test either side, automatic rollback, and the release record. The README's stage table is
-  the current picture.
-- **Running `release.yml` deploys to `test` and then `production`.** It pushes real `vX.Y.Z` tags to
-  all five repositories, deploys both standing environments, and creates a GitHub Release. A failed
-  attempt still consumes its version number — tags are never reused, and a **retry always uses
-  `patch`**, never a repeat of the original bump, which would double-count it. Do not dispatch it
-  casually to "see what happens", and read "Before starting a release" in the README first.
-- **Scan the open issues before dispatching a release.** Across `mootmaker`, the three components
-  and this repo — not just the repo whose change prompted the release. Nothing in `release.yml`
-  gates on whether now is a good moment, so this is the check that catches a manual prerequisite
-  the pipeline has no step for, or a known-broken path the run is about to exercise for the first
-  time. The README's "Before starting a release" gives the command and the three shapes to look for.
-- **The PAT is the one long-lived credential in this design.** `RELEASE_TAG_PAT` is `contents: write`
-  on exactly five repos and is used in exactly one place, the `tag` job. Its value must never be
-  echoed, logged, or pass through a session.
-- **This repo doesn't own any component's build/deploy logic.** `mootmaker-api`,
-  `mootmaker-webapp`, and `mootmaker-demo-data` each own their own build-and-deploy as a reusable
-  workflow (`on: workflow_call`) in their own repo; whatever lands here calls those, rather than
-  reimplementing them.
-- **A release touches `test` and `production` — both real, standing environments.** Treat anything
-  here with the same care as those repos' own `deploy.sh production`.
+- **Running `release.yml` deploys to `test` and `production`.** It pushes real `vX.Y.Z` tags to five
+  repositories and creates a GitHub Release. Never dispatch it to "see what happens"; dispatch it only
+  when a release is wanted, after the checks in the README.
+- **A failed attempt uses up its version, and a retry always uses `patch`.** Tags are never reused or
+  removed.
+- **`RELEASE_TAG_PAT` is the one long-lived credential.** It is used only by the `tag` job. Its value must
+  never be echoed, logged, or pass through a session.
+- **This repository owns no component's build or deploy.** Each component's `release-build.yml` (a
+  reusable workflow) does that; change it there, and call it from here.
+- **Reusable workflows run as this repository.** The AWS role trusts `mootmaker-release` at `main`, and a
+  called workflow presents the caller's identity, so the components' release builds run under that trust.
+  Keep `main` here protected accordingly (mootmaker-release#91).
+- **Respect the load-bearing orderings** listed in the README and commented in the workflow: tag only after
+  every build, `record-outcome` always runs, only the web smoke decides rollback.
+- **The production smoke suite is read-only.** Proving a write in production is a design change, not a
+  test change.
+- **Test the fail-fast action with `.github/actions/fail-fast/test.sh`** after changing it.
 
 ---
 
 ## Project-wide rules
 
-This repository is part of the **mootmaker** project. The workflow rules that apply everywhere live
-in the hub repository, which you should find checked out as a sibling directory:
+This repository is part of **Mootmaker**. The hub repository, checked out as a sibling at
+`../mootmaker`, holds what applies everywhere:
 
-    ../mootmaker/docs/process/README.md
+- How work is done: [`../mootmaker/docs/process/README.md`](https://github.com/geoffweatherall/mootmaker/blob/main/docs/process/README.md).
+  Read it before any non-trivial work.
+- How the system fits together: [`../mootmaker/docs/overview/`](https://github.com/geoffweatherall/mootmaker/tree/main/docs/overview).
+- What to do when something is wrong: [`../mootmaker/docs/runbooks/`](https://github.com/geoffweatherall/mootmaker/blob/main/docs/runbooks/README.md).
 
-On GitHub: <https://github.com/geoffweatherall/mootmaker/blob/main/docs/process/README.md>
+The short version:
 
-**Read it before doing any non-trivial work here.** The short version:
+- Work of any real size starts with a **design** (`../mootmaker/designs/`); a bug or small change starts
+  with a **GitHub issue in this repository**, so `Closes #N` works.
+- Everything lands on a **branch** through a **pull request**. Reading the diff is the review; merging is
+  the approval.
+- **A green acceptance run against a real deployed environment** is the definition of working.
+- **`test` and `production` change only through a release** (`release.yml` in mootmaker-release). Use an
+  ephemeral environment for your own work, and tear it down when you finish.
+- **Say what something costs in AWS before creating it.** Under NZ$1 one-off, go ahead and state it;
+  more, or anything recurring, ask first.
+- **Keep documentation and comments true and current.** If a change makes a document wrong, fixing it is
+  part of the change. Describe what is, not how it got here; a comment says what and why.
+- **Verify against reality, not your own output**, and **say what actually happened**, including
+  failures and skipped steps.
 
-- Work of any real size starts with a **design document** (`../mootmaker/designs/`), not with code.
-- Bugs and small changes start with a **GitHub issue in this repository**, so `Closes #N` works.
-- All work happens on a **branch** and lands via a **pull request**. There is no approval step —
-  reading the diff is the review, merging is the approval.
-- **A green acceptance run against a real deployed environment** is the definition of working — not
-  a passing unit suite, and not a successful deploy.
-- **Environments are `production`, `test`, or ephemeral.** `test` and `production` change only
-  through `release.yml` in mootmaker-release — never `./deploy.sh` by hand. Everything else is
-  ephemeral: tear down any you create, as part of finishing rather than as a tidy-up afterwards.
-- **If your change makes a document wrong, fixing it is part of the change.**
-- **Verify against reality, not your own output.** A script exiting zero is not evidence that the
-  thing it was meant to do happened.
-- **Say what actually happened.** Failing tests get reported with their output; skipped steps get
-  named.
-
-Also useful: [`../mootmaker/docs/roles/`](https://github.com/geoffweatherall/mootmaker/blob/main/docs/roles/)
-for which kind of work you are doing, and
-[`../mootmaker/tools/workstation/check.sh`](https://github.com/geoffweatherall/mootmaker/blob/main/tools/workstation/check.sh)
-if something is not installed.
+Something not installed? [`../mootmaker/tools/workstation/check.sh`](https://github.com/geoffweatherall/mootmaker/blob/main/tools/workstation/check.sh).
 
 `CLAUDE.md` in this repository is a symlink to this file.

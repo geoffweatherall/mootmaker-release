@@ -44,12 +44,12 @@ This pipeline makes that concrete rather than hypothetical:
 | | Per release | × 60 |
 |---|---|---|
 | Wall clock | ~57 min | **57 hours** |
-| AWS | ~$0.10 | ~$6 |
+| AWS | ~US$0.12 | ~US$7 |
 | Claude tokens (green) | a few thousand | ~200k |
 
-The money is irrelevant — this whole system costs about $0.60/month at rest plus roughly $0.10 per
-acceptance run (see
-[running costs](https://github.com/geoffweatherall/mootmaker/blob/main/docs/reference/running-costs.md)).
+The money is irrelevant: the whole system costs a few US dollars a month, and a release about US$0.12
+(see the
+[cost overview](https://github.com/geoffweatherall/mootmaker/blob/main/docs/overview/cost-and-scale-to-zero.md)).
 **Wall-clock time is the binding constraint**, and 57 hours to buy a 5% bound is a bad trade.
 
 ### Token cost is asymmetric, and that matters
