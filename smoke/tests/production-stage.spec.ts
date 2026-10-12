@@ -10,7 +10,7 @@ import { expect, test } from '@playwright/test'
  *   - no account signup
  *   - no account deletion
  *   - no password reset
- *   - no meeting creation  <- the design's own first draft got this wrong and was corrected
+ *   - no meeting creation
  *
  * The reason is not squeamishness about production. It is that a read-only suite can never be the
  * thing that leaves stray data behind release after release, so there is no accumulation problem to
@@ -33,7 +33,7 @@ test.describe('production smoke (read-only)', () => {
     await page.goto('/')
 
     // The home page shows the demo credentials to every signed-out visitor - this is a public demo
-    // by design (see mootmaker-webapp's README), so signing in as them is not a privileged act.
+    // by design, so signing in as them is not a privileged act.
     await page.getByLabel('Email').fill(demoEmail)
     await page.getByLabel('Password').fill(demoPassword)
     await page.getByRole('button', { name: 'Sign in' }).click()
@@ -56,25 +56,20 @@ test.describe('production smoke (read-only)', () => {
     // what would catch mootmaker-api#39, the Cognito attribute write that never converges.
     await expect(page.getByRole('heading', { name: 'Calendar' })).toBeVisible()
 
-    // Then an actual meeting. This was deliberately absent until now: the page filters to ONE
-    // person, and demo-data guaranteed a meeting on every weekday without guaranteeing the demo
-    // user was on any of them, so asserting this would have failed for a data reason while
-    // looking like a broken read. mootmaker-demo-data#29 makes it deterministic - the demo
-    // Person is in that environment's guaranteed-person-ids list.
+    // Then an actual meeting. The page shows ONE person, and the demo Person is in the
+    // environment's guaranteed-person-ids list, so demo-data gives it a meeting on every weekday
+    // in its window (mootmaker-demo-data#29).
     //
-    // Against the GRID, not "today". The calendar renders Mon-Fri only, so a release on a
-    // Saturday or Sunday shows the week just gone; an assertion naming today would fail every
-    // weekend. Every weekday in the six-week grid sits inside demo-data's seeding window on any
-    // day of the week, so "some meeting is rendered" is true whenever the guarantee has run.
+    // Against the visible week, not "today". The calendar shows one Mon-Fri week, so a release on
+    // a Saturday or Sunday shows the week just gone; an assertion naming today would fail every
+    // weekend. Every weekday of that week sits inside demo-data's window (7 days back), so "some
+    // meeting is rendered" is true whenever the guarantee has run.
     //
-    // This is the assertion the smoke suite existed for and did not have: it exercises
-    // custom:personId -> workspace(dates:) -> day items -> per-person filtering, the whole v2.0.0
-    // stack, where the heading alone proves only that a page rendered.
+    // This exercises custom:personId -> workspace(dates:) -> day items -> per-person filtering,
+    // where the heading alone proves only that a page rendered.
     //
-    // A meeting row is a button, not a link, that opens the shared detail sheet/panel in place -
-    // see mootmaker-webapp's designs/meeting-detail-consolidation.md - so it can no longer be found
-    // by an `a[href^="/meetings/"]` CSS selector (nothing on this page has that href any more).
-    // Matched instead by a time pattern in its accessible name, since this suite has no way to
+    // A meeting row is a button, not a link, that opens the shared detail sheet/panel in place, so
+    // nothing on this page has an `a[href^="/meetings/"]`. Matched instead by a time pattern in its accessible name, since this suite has no way to
     // know a real subject in advance (real production data) and no other control on this page has
     // a time-shaped name. Clicking it is a read, not a write - fine for this strictly read-only
     // suite - and proves the same per-person data actually renders, one level deeper than the

@@ -4,9 +4,9 @@ import type { APIRequestContext } from '@playwright/test'
  * The few admin-only API calls the test-stage smoke test needs for its own setup and clean-up,
  * made with the API's machine-to-machine client.
  *
- * The account the suite signs up is a standard user, and standard users cannot create rooms. The
- * suite used to borrow whatever rooms demo-data had generated. Now it brings its own, so it works
- * in an environment with no demo data at all (mootmaker-release#64, mootmaker-api#95 rule 6).
+ * The account the suite signs up is a standard user, and standard users cannot create rooms, so
+ * the suite creates its own over the API. It therefore works in an environment with no demo data at
+ * all (mootmaker-release#64, mootmaker-api#95 rule 6).
  *
  * Test stage only. The production suite is read-only and never calls this.
  */

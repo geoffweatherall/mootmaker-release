@@ -22,15 +22,13 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   // Playwright's defaults (30s per test, 5s per expect) are both too short here, for two separate
-  // reasons - matching mootmaker-webapp/acceptance/playwright.config.ts, which learned this first.
+  // reasons - matching mootmaker-webapp/acceptance/playwright.config.ts.
   //
-  // expect: a Java Lambda cold start is around 6 seconds, so a 5s assertion timeout fails against a
-  // freshly deployed environment while the request is still in flight. That is exactly how the
-  // meeting read-back failed in CI while passing locally against an already-warm test environment.
+  // expect: a freshly deployed environment's first requests meet cold Lambdas, and a 5s assertion
+  // can time out while the request is still in flight.
   //
-  // timeout: waitForVerificationCode long-polls SQS for up to 60 seconds waiting for a real email.
-  // Inside a 30-second test timeout that could never have completed on a slow delivery - it passed
-  // locally only because delivery happened to be fast.
+  // timeout: waitForVerificationCode long-polls SQS for up to 60 seconds waiting for a real email,
+  // which a 30-second test timeout could never allow on a slow delivery.
   timeout: 120_000,
   expect: {
     timeout: 15_000,

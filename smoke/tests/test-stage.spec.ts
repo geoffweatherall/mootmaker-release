@@ -148,9 +148,8 @@ test.describe('test-stage smoke', () => {
     // expanded - see RoomAvailabilityPage.tsx's "See <day>'s meetings" Collapse toggle - and even
     // then plain getByText(subject) is ambiguous: the card's own status sublabel can independently
     // repeat the bare subject (see roomAvailabilityLogic.ts), so only the meeting row itself is
-    // asserted on. It opens the shared detail sheet/panel in place now, not a navigation - role
-    // 'button', not 'link' - see mootmaker-webapp's designs/meeting-detail-consolidation.md, which
-    // needed the identical fix throughout its own acceptance suite for the same change.
+    // asserted on. It opens the shared detail sheet/panel in place, not a navigation - role
+    // 'button', not 'link'.
     const card = page
       .getByText(roomName, { exact: true })
       .locator('xpath=ancestor::*[contains(concat(" ", normalize-space(@class), " "), " MuiPaper-root ")][1]')
