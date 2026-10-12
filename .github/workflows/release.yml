@@ -7,7 +7,7 @@
 #                   -> smoke test (web and Android) -> deploy production
 #                   -> smoke production (web and Android) -> record-outcome
 #
-# The Android app (mootmaker/designs/android-app.md, Q3-A) is a fourth component with nothing to
+# The Android app (mootmaker/designs/archive/android-app.md, Q3-A) is a fourth component with nothing to
 # deploy: build-android builds and signs its APK once, the smoke jobs install that APK, and
 # record-outcome attaches it to the Release only when every stage passed. An APK can't be
 # un-published from phones, so it is published last.
