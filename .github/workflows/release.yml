@@ -540,7 +540,7 @@ jobs:
             echo "${PREVIOUS} published no APK, so there is no installed app to check."
             echo "found=false" >> "$GITHUB_OUTPUT"
           fi
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         if: steps.download.outputs.found == 'true'
         with:
           name: android-previous-release
@@ -975,7 +975,7 @@ jobs:
     steps:
       # The APK build-android signed and the smoke jobs tested, attached to the Release only on
       # success. Absent when build-android failed, which the success branch below never reaches.
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         if: needs.build-android.result == 'success'
         with:
           name: mootmaker-android-${{ needs.compute-version.outputs.version }}
