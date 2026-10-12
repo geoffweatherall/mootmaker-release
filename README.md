@@ -12,7 +12,7 @@ through `test`, then `production`, with a smoke test at each stage. It also buil
 publishes the [mootmaker-android](https://github.com/geoffweatherall/mootmaker-android) app under the
 same version: an APK has nothing to deploy, so it is smoke-tested against `test` and `production`
 and attached to the GitHub Release only when every stage passed
-([android-app.md](https://github.com/geoffweatherall/mootmaker/blob/main/designs/android-app.md) Q3-A).
+([android-app.md](https://github.com/geoffweatherall/mootmaker/blob/main/designs/archive/android-app.md) Q3-A).
 
 Releasing is a deliberate, explicitly-initiated act (`gh workflow run` — a human or an AI), never a
 side effect of merging to `main`. See
