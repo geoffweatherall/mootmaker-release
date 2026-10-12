@@ -19,7 +19,7 @@ request as any change to the pipeline.
   reusable workflow) does that; change it there, and call it from here.
 - **Reusable workflows run as this repository.** The AWS role trusts `mootmaker-release` at `main`, and a
   called workflow presents the caller's identity, so the components' release builds run under that trust.
-  Keep `main` here protected accordingly (mootmaker-release#91).
+  `main` is protected accordingly: a pull request is required, for admins too (mootmaker-release#91).
 - **Respect the load-bearing orderings** listed in the README and commented in the workflow: tag only after
   every build, `record-outcome` always runs, only the web smoke decides rollback.
 - **The production smoke suite is read-only.** Proving a write in production is a design change, not a
