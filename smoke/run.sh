@@ -3,7 +3,7 @@
 # ../mootmaker/designs/archive/ci-cd-pipeline.md Decision 9.
 #
 # This script never creates or tears down an environment - the release pipeline deploys, then calls
-# this. That is the opposite of mootmaker-webapp's e2e/acceptance run.sh, which may create its own
+# this. That is the opposite of mootmaker-webapp's acceptance/run.sh, which may create its own
 # ephemeral environment; a smoke test's whole purpose is to check the environment the release just
 # produced.
 #

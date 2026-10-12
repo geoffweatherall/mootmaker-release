@@ -1,150 +1,137 @@
 # mootmaker-release
 
-A project that is part of my [Claude Code exploration](https://github.com/geoffweatherall/mootmaker).
+The release pipeline. One run of `release.yml` versions, builds, tests and tags every component together:
+mootmaker-api, mootmaker-webapp and mootmaker-demo-data, plus the mootmaker-android APK. It then promotes
+them through `test` to `production`, with smoke tests at each stage, and records the outcome as a
+GitHub Release. It is the only way `test` and `production` change.
 
-## Purpose
+A release runs only when someone starts it. Merging to `main` in any repository deploys nothing.
 
-Hosts the release pipeline that ships [mootmaker-api](https://github.com/geoffweatherall/mootmaker-api),
-[mootmaker-webapp](https://github.com/geoffweatherall/mootmaker-webapp), and
-[mootmaker-demo-data](https://github.com/geoffweatherall/mootmaker-demo-data) to `test` and
-`production` — versioning, tagging, building and acceptance-testing all three together, promoting
-through `test`, then `production`, with a smoke test at each stage. It also builds, tests and
-publishes the [mootmaker-android](https://github.com/geoffweatherall/mootmaker-android) app under the
-same version: an APK has nothing to deploy, so it is smoke-tested against `test` and `production`
-and attached to the GitHub Release only when every stage passed
-([android-app.md](https://github.com/geoffweatherall/mootmaker/blob/main/designs/archive/android-app.md) Q3-A).
+```bash
+gh workflow run release.yml -R geoffweatherall/mootmaker-release -f bump=patch   # or minor, major
+```
 
-Releasing is a deliberate, explicitly-initiated act (`gh workflow run` — a human or an AI), never a
-side effect of merging to `main`. See
-[mootmaker/designs/archive/ci-cd-pipeline.md](https://github.com/geoffweatherall/mootmaker/blob/main/designs/archive/ci-cd-pipeline.md)
-for the full design and reasoning.
+The whole delivery process, including pull requests and ephemeral environments, is in the hub's
+[delivery overview](https://github.com/geoffweatherall/mootmaker/blob/main/docs/overview/delivery.md).
+The design and its reasoning are in
+[ci-cd-pipeline.md](https://github.com/geoffweatherall/mootmaker/blob/main/designs/archive/ci-cd-pipeline.md).
 
-**Status: built and in regular use (updated 2026-09-05).** The design itself remains `Drafting`
-until Geoff promotes it, but every stage now exists and runs: version computation, the four
-component builds, tagging, promotion to `test` and then `production` with a smoke test either side,
-automatic rollback, and the release record. Twenty versions have run through it so far; ten
-recorded a failure, which is visible precisely because a failed run publishes a `FAILED` prerelease
-rather than silently discarding the version it claimed.
+## The pipeline
 
-Running `release.yml` today builds, acceptance-tests and tags all four components, deploys the three
-deployable ones to `test`, smoke-tests that (the new APK and the last release's, the n-1 check), promotes the same artifacts to `production`, smoke-tests again, and rolls
-`production` back automatically if that fails.
+```mermaid
+flowchart TD
+  cv["compute-version<br/>next version, pin each main SHA"]
+  subgraph builds["Builds, in parallel, each in its own ephemeral environment"]
+    direction LR
+    ba["build-api"]
+    bw["build-webapp"]
+    bd["build-demo-data"]
+    bn["build-android"]
+  end
+  tag["tag<br/>vX.Y.Z in all five repositories"]
+  dt["deploy-test<br/>api, webapp, demo-data, then seed"]
+  st["smoke-test-test<br/>web: sign up, use, delete"]
+  sat["smoke-android-test<br/>and the n-1 APK"]
+  dp["deploy-production<br/>then seed"]
+  sp["smoke-test-production<br/>read-only"]
+  sap["smoke-android-production"]
+  rb["rollback-production<br/>redeploy the previous tags"]
+  srb["smoke-test-rollback"]
+  ro["record-outcome<br/>always runs"]
+  cv --> builds --> tag --> dt
+  dt --> st
+  dt --> sat
+  st --> dp
+  sat --> dp
+  dp --> sp
+  dp --> sap
+  sp -- "fails" --> rb --> srb
+  sp --> ro
+  sap --> ro
+  srb --> ro
+```
+
+| Stage | What it does |
+|---|---|
+| `compute-version` | Reads the latest version from this repository's GitHub Releases, failed ones included, and applies the bump. Pins each component's `main` commit, so every later stage builds and tags the same code even if something merges mid-release |
+| `build-*` | Calls each component's own `release-build.yml`, which builds once, proves the build with its full acceptance suite in a fresh ephemeral environment (`rel-api-*`, `rel-web-*`, `rel-demo-*`, `rel-and-*`) and uploads it. Once one build fails, the others stop early |
+| `tag` | Pushes `vX.Y.Z` to all five repositories, only once every build has passed, so a tag always names a proven commit |
+| `deploy-test` | Deploys the three deployable components' built artifacts to `test`, then runs demo-data |
+| `smoke-test-test` | Playwright (`smoke/tests/test-stage.spec.ts`): signs up with a real emailed code, uses the app, deletes the account |
+| `smoke-android-test`, `smoke-android-n-1-test` | Maestro, with the new APK and with the previous release's APK. Installed phones are not updated when the API changes, so the previous app must still work |
+| `deploy-production` | The same artifacts to `production`, then runs demo-data |
+| `smoke-test-production`, `smoke-android-production` | Read-only checks with the demo account; nothing is written to production |
+| `rollback-production`, `smoke-test-rollback` | Only if the web production smoke fails: redeploys the previous release's tags, and smoke-tests them |
+| `record-outcome` | A GitHub Release with the APK and its SHA-256 on success. A `FAILED` prerelease if it tagged and then failed. An issue if it failed before tagging |
+
+Things that are easy to break by rearranging jobs, and are commented in the workflow:
+
+- **Tags are pushed only after every build passes.** A failed release never reuses its version; nothing
+  is ever un-tagged.
+- **`record-outcome` runs with `if: always()` and decides from the tag job's own output**, not from
+  whether later jobs passed. Otherwise a run that failed after tagging would leave tags with nothing
+  recording them.
+- **Only the web smoke test decides rollback.** An Android failure on `production` stops the APK being
+  published and marks the release failed, but does not roll back a working backend.
+- **A demo-data seeding failure stops the release without rolling back.** Reverting a good deploy
+  because demo content failed would not help.
+- **Overlapping runs queue** (`concurrency: release`, not cancelled), so two releases never race on the
+  version, the tags or a deploy.
+- **Without the Android signing secret, every Android stage is skipped** and the other three components
+  still ship.
 
 ## Before starting a release
 
-Releasing is explicitly initiated, so the judgement about *whether to release now* sits with
-whoever dispatches it rather than with any gate in the pipeline. Four checks, in order:
+Nothing in the pipeline decides whether now is a good time, so the person or agent starting it does.
 
-**1. Scan the open issues first — across every repo the release touches**, not just the one whose
-change prompted it:
+1. **Scan the open issues in every repository the release touches**, not just the one with the change:
 
-```sh
-for r in mootmaker mootmaker-api mootmaker-webapp mootmaker-demo-data mootmaker-android mootmaker-release; do
-  echo "=== $r ==="
-  gh issue list --repo geoffweatherall/$r --state open --limit 40 \
-    --jq '.[] | "#\(.number)\t\(.title)"' --json number,title
-done
-```
+   ```bash
+   for r in mootmaker mootmaker-api mootmaker-webapp mootmaker-demo-data mootmaker-android mootmaker-release; do
+     echo "=== $r ==="
+     gh issue list --repo geoffweatherall/$r --state open --limit 40 --json number,title \
+       --jq '.[] | "#\(.number)\t\(.title)"'
+   done
+   ```
 
-Most open issues are future work and say nothing about today's release. The ones that do fall into
-three shapes, and the point of reading the list is to separate them from the rest:
+   Look for three things. First, a manual step that a design expects before the release, which the
+   pipeline has no step for. Second, a known-broken path that this release will exercise for the first
+   time. Third, anything that changes how far automatic rollback can be trusted. An issue about a bug the
+   release does not touch is not a reason to wait.
+2. **Re-check any fact a design recorded about a particular day** (for example, what is in
+   `production`'s user pool) rather than inheriting it.
+3. **Check that each component's `main` is what you mean to ship.** Whatever is merged when
+   `compute-version` runs is in the release, including work nobody had this release in mind for.
+4. **Choose the bump knowing a failed attempt uses up its version.**
 
-- **A prerequisite someone still has to perform by hand.** The pipeline cannot tell that a design
-  expected a manual step before it ran. `mootmaker#67` was exactly this — a teardown of `test` and
-  `production` that `release.yml` has no step for, because `terraform apply` only ever creates or
-  updates.
-- **A known-broken path that this release will exercise for the first time.** `mootmaker-api#39`
-  (Terraform never converges `custom:*` Cognito attributes) is harmless on the update path and
-  becomes a live question the moment an environment is created from nothing.
-- **An observation that changes how much the safety net is worth.** `mootmaker#46` records that
-  automatic rollback is most likely to fire in precisely the cases it cannot repair —
-  environment-shaped failures rather than code defects, which Stage 1 has already caught. Worth
-  knowing *before* deciding to release unattended, not while reading a red run.
+**Retry a failed release with `patch`**, whatever the failed attempt used. Its bump has already been
+applied: a failed `major` from `v1.0.2` used up `v2.0.0`, and `patch` makes the retry `v2.0.1`.
+Repeating `major` would skip to `v3.0.0`.
 
-An issue that merely describes a bug the release does not touch is not a reason to stop.
+If a release fails, follow the hub's
+[failed release runbook](https://github.com/geoffweatherall/mootmaker/blob/main/docs/runbooks/failed-release.md).
 
-**2. Re-check the facts a design recorded as facts-about-a-day.** Designs here deliberately date
-their environment observations ("Verified 2026-09-07: `production`'s pool contains exactly two
-users ... **That is a fact about that day, not a standing property**"). Re-run the check; do not
-inherit the claim.
+## Credentials
 
-**3. Confirm the component `main` branches are what you mean to ship.** `compute-version` pins each
-component's `main` SHA at the start of the run, so anything merged after that point is not in this
-release, and anything merged before it is — including work nobody had this release in mind for.
-Check for open PRs that were expected to land first.
+| Credential | What it is for | Where it lives |
+|---|---|---|
+| AWS, via GitHub OIDC | Deploying to every environment | Role `mootmaker-release-github-actions-deploy`, which trusts this repository's `main`. Reusable workflows present the caller's identity, so the components' `release-build.yml` runs under it too |
+| `RELEASE_TAG_PAT` | Pushing tags to the five repositories | A fine-grained token, `contents: write` on those five only, used only by the `tag` job. Never echo or log it |
+| `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD` | Signing the APK | Secrets of this repository, passed explicitly to `build-android` because a called workflow sees only its caller's secrets |
 
-**4. Choose the bump knowing a failed attempt consumes the version.** `compute-version` reads the
-latest release *including* failed prereleases, so a version number is never reused. A failed attempt
-does not release its number back.
+How these fit with the rest of the project's security:
+[security overview](https://github.com/geoffweatherall/mootmaker/blob/main/docs/overview/security.md).
 
-**Retrying a failed release always uses `patch`**, whatever bump the failed attempt asked for. The
-requested bump has already been applied and spent: a failed `major` moved the line from `v1.0.2` to
-`v2.0.0`, so the major boundary exists in the version history and the retry only needs to step past
-the burned number. `patch` lands it on `v2.0.1` — still inside the `2.x` that the major bump created,
-which is what a consumer reading the version cares about.
+## What else is here
 
-Repeating the original bump instead double-counts it: a second `major` computes from `v2.0.0` and
-produces `v3.0.0`, skipping `2.x` entirely for a release whose only fault was failing once.
-
-## Why a separate repo
-
-Not the hub (`mootmaker` — deliberately holds no deployed code, and firing real deploys from a docs
-repo blurs that), and not one of the four component repos it releases (arbitrarily picking one to
-coordinate the other three is worse than a dedicated, single-minded home). See the design doc's own
-"Trade-offs and decisions" for the fuller reasoning.
-
-## What lives here
-
-`.github/workflows/release.yml` — the `workflow_dispatch`-triggered orchestrator, taking a `bump`
-input (`patch`/`minor`/`major`). Built so far:
-
-| Stage | Status |
+| Path | What |
 |---|---|
-| `compute-version` — next version from this repo's GitHub Releases; pins each component's commit | built |
-| `build-api` / `build-webapp` / `build-demo-data` / `build-android` — each component's own `release-build.yml`, in parallel; once one fails, the others stop early (fail-fast, below) | built |
-| `tag` — pushes `vX.Y.Z` to all five repos, only once every build is green | built |
-| `deploy-test` → `smoke-test-test`, `smoke-android-test`, and `smoke-android-n-1-test` (the last release's APK, from `previous-android`, against the new `test`; skipped if that release had none) | built |
-| `deploy-production` → `smoke-test-production` and `smoke-android-production` → `rollback-production` → `smoke-test-rollback` | built |
-| `record-outcome` — the GitHub Release (with the Android APK and its SHA-256), or a FAILED prerelease, or an issue | built |
+| `smoke/` | The cross-component Playwright smoke suites and `run.sh`. Real emailed codes come through the `mootmaker-email-testing` package, pinned in `package.json` |
+| `.github/actions/fail-fast/` | The action each `release-build.yml` installs to stop early once another job in the run has failed. Deploys are gated with `fail-fast check`; only test commands are wrapped with `fail-fast run`, never Terraform. `test.sh` is its test suite |
+| `scripts/` | Ships each stage's structured output to the CloudWatch log group `/mootmaker/release-pipeline`, so a release has durable detail behind its GitHub Release summary. Shipping never fails a release |
+| `deploy.sh`, `deploy/terraform/` | That log group and its saved queries. One for the whole pipeline, taking no environment |
+| [docs/release-confidence.md](docs/release-confidence.md) | How many consecutive green releases it takes to believe an intermittent fault is fixed |
 
-**The Android stages need, before the first release that includes them:** the release keystore as
-four repository secrets here (`ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`,
-`ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`; `build-android` passes them explicitly, because a called
-workflow sees only its caller's secrets), and `mootmaker-android` added to `RELEASE_TAG_PAT`'s
-repositories. Until the `ANDROID_KEYSTORE_BASE64` secret exists, every Android stage is skipped
-(a notice says so) and the release ships the other three components exactly as before. The keystore is generated and backed up by Geoff and never enters a cloud session.
-The n-1 check exists because installed apps don't update when the API deploys: a failure there stops
-the release before `production`, like any `test` smoke failure.
-An Android smoke failure on `production` does not roll production back (the web smoke test decides
-that); it stops the APK being published and marks the release FAILED.
-
-Two things in there are easy to break by rearranging and are commented as such in the workflow:
-tags are pushed **only after** all four builds pass, so a tag always names a proven commit; and
-`record-outcome` runs `if: always()` and branches on the tag job's **own output** rather than on
-whether later jobs succeeded, which is what prevents tags existing with nothing recording them.
-
-The cross-component smoke-test suites live in `smoke/` (Playwright, with its own `run.sh` and
-config). They read real verification emails through the `mootmaker-email-testing` package, the
-same client mootmaker-webapp's suites use, pinned to a tag in `package.json` — see
-[mootmaker-email-testing](https://github.com/geoffweatherall/mootmaker-email-testing#using-it-from-tests).
-`scripts/` holds the CloudWatch log shipping that gives each release durable detail
-behind its GitHub Release summary.
-
-`.github/actions/fail-fast/` is the action each component's `release-build.yml` installs so it
-stops early once another job in the run has failed. A release that cannot tag is already lost, so
-the rest of the parallel builds' acceptance runs would only spend time and AWS cost
-([mootmaker/designs/cost-reduction.md](https://github.com/geoffweatherall/mootmaker/blob/main/designs/cost-reduction.md),
-Measure 3). Deploys are gated with `fail-fast check`; only test commands are wrapped with
-`fail-fast run`, never terraform. A stopped build ends as `failure` with a "Stopped early"
-annotation, and `record-outcome` reports it as "stopped early" so the record still names the build
-that actually broke. `./test.sh` beside it is the script's test suite.
-
-[docs/release-confidence.md](docs/release-confidence.md) covers a question this pipeline raised and
-then made measurable: **how many consecutive green releases are enough** to believe an intermittent
-fault is fixed — why sampling can show a rate improved but cannot show it is small, what 60 runs
-would actually cost in wall-clock and AWS spend, and why the deterministic regression test matters
-more than the run count.
-
-Each component repo (`mootmaker-api`, `mootmaker-webapp`, `mootmaker-demo-data`, `mootmaker-android`) owns its own
-build-and-deploy logic as a reusable workflow (`on: workflow_call`) — this repo calls those, it
-doesn't duplicate them.
+**Why a separate repository:** the hub holds no deployed code, and picking one component to coordinate
+the other three would be arbitrary. Each component owns its build and deploy as a reusable workflow; this
+repository only calls them.

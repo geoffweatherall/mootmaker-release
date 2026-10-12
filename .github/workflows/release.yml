@@ -159,22 +159,13 @@ jobs:
       version: ${{ needs.compute-version.outputs.version }}
       ref: ${{ needs.compute-version.outputs.api-sha }}
 
-  # Parallel with build-api and build-demo-data (mootmaker#75, mootmaker-release#11). Decision 7
-  # gives each component its own fresh ephemeral environment, and mootmaker-webapp and
-  # mootmaker-demo-data each deploy mootmaker-api into theirs - so this runs THREE simultaneous
-  # mootmaker-api deployments, each publishing SnapStart versions.
-  #
-  # That is how the v0.0.2 release failed: all three builds died within seconds of each other on a
-  # published version stuck in 'Failed'/'FunctionError' (mootmaker#41), and the builds were
-  # serialised in response. The suspected cause was the account's Lambda concurrency quota - 10
-  # then, 1,000 since 2026-09-07 (mootmaker#72) - but that was never proven: FunctionError says
-  # init failed, not that it was throttled.
-  #
-  # So this is the experiment that settles #41. If a release fails with all three builds dying
-  # together on a Failed/FunctionError version, capture the function's StateReason
-  # (aws lambda get-function-configuration --qualifier <version>) before tearing anything down,
-  # record it on #41, and restore the old chain: build-webapp needs build-api, build-demo-data needs
-  # build-webapp.
+  # Parallel with build-api and build-demo-data (mootmaker#75). Decision 7 gives each component its
+  # own fresh ephemeral environment, and mootmaker-webapp and mootmaker-demo-data each deploy
+  # mootmaker-api into theirs - so this runs THREE simultaneous mootmaker-api deployments, each
+  # publishing SnapStart versions. If all three builds ever die together on a published version in
+  # 'Failed'/'FunctionError', capture the function's StateReason
+  # (aws lambda get-function-configuration --qualifier <version>) before tearing anything down:
+  # see mootmaker#41.
   build-webapp:
     name: build-webapp
     needs: compute-version
@@ -391,8 +382,7 @@ jobs:
       # test environment.
       #
       # --cli-read-timeout clears the function's own 900s ceiling. The CLI's 60s default would
-      # report a false failure on a full seed while the Lambda ran on regardless - the same trap
-      # that made demo-data's acceptance suite read a silent retry (demo-data#16).
+      # report a false failure on a full seed while the Lambda ran on regardless.
       - name: Seed test with demo data
         run: |
           aws lambda invoke \
@@ -440,10 +430,8 @@ jobs:
           cache-dependency-path: mootmaker-release/package-lock.json
 
       # smoke/run.sh reads its configuration from SSM Parameter Store (mootmaker-api#94) and the
-      # mutating suite polls SQS for real verification emails - both of which need AWS credentials. The job declared id-token: write
-      # but never exchanged it, so run.sh failed immediately with "No valid credential sources
-      # found". The deploy jobs had this step; the smoke jobs were written from their shape and
-      # dropped it.
+      # mutating suite polls SQS for real verification emails - both of which need AWS
+      # credentials. id-token: write alone is not enough; the token has to be exchanged here.
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
@@ -672,12 +660,10 @@ jobs:
               "$RUNNER_TEMP/deploy-production-$c.log"
           done
 
-      # NB-3. Seeds production, mirroring NB-2 for test. This used to say production was
-      # deliberately NOT seeded, because demo-data runs there daily and its concerns are
-      # idempotent. That reasoning holds for a normal release and fails for a rebuild: after a
-      # destroy there is nothing for idempotence to be idempotent OVER, so v2.0.0 left the public
-      # demo with zero rooms until the 06:00 UTC schedule fired hours later - and the production
-      # smoke passed over it regardless. See mootmaker-release#42.
+      # NB-3. Seeds production, mirroring NB-2 for test. On a normal release this is a no-op,
+      # because demo-data runs there daily and its concerns are idempotent. After a rebuild there is
+      # nothing to be idempotent over, and without this the public demo would have no rooms until
+      # the 06:00 UTC schedule fired hours later (mootmaker-release#42).
       #
       # Seeding is not "a write the release does not need to make": demo content IS the product
       # for a demo system, so a release that cannot produce it has not succeeded.
@@ -723,10 +709,8 @@ jobs:
           cache-dependency-path: mootmaker-release/package-lock.json
 
       # smoke/run.sh reads its configuration from SSM Parameter Store (mootmaker-api#94) and the
-      # mutating suite polls SQS for real verification emails - both of which need AWS credentials. The job declared id-token: write
-      # but never exchanged it, so run.sh failed immediately with "No valid credential sources
-      # found". The deploy jobs had this step; the smoke jobs were written from their shape and
-      # dropped it.
+      # mutating suite polls SQS for real verification emails - both of which need AWS
+      # credentials. id-token: write alone is not enough; the token has to be exchanged here.
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
@@ -910,13 +894,6 @@ jobs:
           ref: ${{ needs.compute-version.outputs.previous }}
           path: mootmaker-release-previous
 
-      # Only for the transitional install step below - see its comment.
-      - uses: actions/checkout@v5
-        with:
-          repository: geoffweatherall/mootmaker-webapp
-          ref: ${{ needs.compute-version.outputs.previous }}
-          path: mootmaker-webapp
-
       - uses: actions/setup-node@v5
         with:
           node-version: '24'
@@ -924,29 +901,13 @@ jobs:
           cache-dependency-path: mootmaker-release-previous/package-lock.json
 
       # smoke/run.sh reads its configuration from SSM Parameter Store (mootmaker-api#94) and the
-      # mutating suite polls SQS for real verification emails - both of which need AWS credentials. The job declared id-token: write
-      # but never exchanged it, so run.sh failed immediately with "No valid credential sources
-      # found". The deploy jobs had this step; the smoke jobs were written from their shape and
-      # dropped it.
+      # mutating suite polls SQS for real verification emails - both of which need AWS
+      # credentials. id-token: write alone is not enough; the token has to be exchanged here.
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: arn:aws:iam::431071856068:role/mootmaker-release-github-actions-deploy
           aws-region: us-east-1
-
-      # TRANSITIONAL (mootmaker-release#5). The smoke suite runs from the PREVIOUS release's tag, and
-      # tags before the email client moved to the mootmaker-email-testing package import it from
-      # mootmaker-webapp/support/ instead. Node resolves an imported file's dependencies relative to
-      # ITS OWN location, so that copy needs mootmaker-webapp/node_modules installed. Skipped once
-      # the previous tag no longer imports from the webapp - after which this step, the webapp
-      # checkout above, and smoke/run.sh's sibling check at that tag are all dead and can go.
-      - name: Install the webapp's runtime dependencies, if the previous smoke suite still imports them
-        run: |
-          if grep -rqs "mootmaker-webapp/support/" mootmaker-release-previous/smoke; then
-            (cd mootmaker-webapp && npm ci --omit=dev)
-          else
-            echo "Previous smoke suite uses the mootmaker-email-testing package - nothing to install."
-          fi
 
       - name: Install smoke-test dependencies
         working-directory: mootmaker-release-previous
@@ -1005,9 +966,7 @@ jobs:
     permissions:
       contents: write
       # Decision 5's third case opens an ISSUE when no tag was ever pushed, and that needs
-      # issues:write - contents:write is not enough. The first release exercised only the
-      # tagged-then-failed case, so this gap stayed hidden until a run failed before tagging and
-      # record-outcome itself died with "Resource not accessible by integration (createIssue)".
+      # issues:write - contents:write is not enough.
       issues: write
       # Reading the build jobs and their annotations, to tell a build that failed from one that
       # fail-fast stopped because another failed (see shown_result below).
